@@ -104,13 +104,18 @@ for (const [browserName, executablePath] of [
     assert.match((await result(page)).status, /^Stopped/);
     assert.equal((await result(page)).moves, 1);
 
+    await fixture(page, 'noop'); await click(page); await click(page); await settled(page);
+    actual = await result(page);
+    assert.match(actual.status, /^Stopped/);
+    assert.deepEqual(actual.visible, actual.order);
+
     await fixture(page, 'normal', { playlistId: 'PL-owned', totalVideos: 100 });
     actual = await result(page);
     assert.match(actual.detail, /Loaded 8 of 100/);
     assert.match(actual.detail, /saved playlist order/);
     await page.addScriptTag({ content: source });
     assert.equal(await page.$$('yt-up-next-duration-sort').then(hosts => hosts.length), 1);
-    console.log(`${browserName}: 9 browser fixture scenarios passed`);
+    console.log(`${browserName}: 10 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }

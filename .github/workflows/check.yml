@@ -1,0 +1,24 @@
+name: Check and build userscript
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Check committed userscript matches source
+        run: git diff --exit-code -- dist/playlist-sort.user.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playlist-sort-userscript
+          path: dist/playlist-sort.user.js
