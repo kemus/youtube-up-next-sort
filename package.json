@@ -1,0 +1,24 @@
+{
+  "name": "youtube-up-next-sort",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sort YouTube's upcoming queue by duration using native reorder operations.",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "test:browser": "node tests/browser.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "serve": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "esbuild": "0.28.2",
+    "puppeteer-core": "25.10.0",
+    "typescript": "7.0.2"
+  }
+}
