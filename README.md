@@ -80,8 +80,12 @@ it does not replace playback controls or claim success from DOM order alone.
 Browser fixture tests cannot establish compatibility with every live YouTube
 experiment or with every userscript manager's injection mode.
 
-Validation on 2026-09-04: five sorting unit tests and ten fixture scenarios each
-in installed Linux Firefox and Chromium passed. A separate public, signed-out
-Firefox probe confirmed the native controller and playlist item data shapes, but
-did not produce an editable queue. Actual native reordering and playback on
-YouTube still require the live acceptance check above.
+Validation on 2026-09-04: five sorting unit tests and eleven fixture scenarios each
+in installed Linux Firefox and Chromium passed, including Trusted Types CSP
+enforcement. A public Firefox Developer Edition probe reproduced the v0.1.0 UI
+failure (`ShadowRoot.innerHTML` rejected by YouTube's policy) and confirmed the
+v0.1.1 button is visible on the real watch page after replacing HTML-string
+insertion with DOM creation. The earlier signed-out probe confirmed the native
+controller and item data shapes but did not produce an editable queue. Actual
+native reordering and playback on YouTube still require the live acceptance
+check above.

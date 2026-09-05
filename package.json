@@ -1,6 +1,6 @@
 {
   "name": "youtube-up-next-sort",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Sort YouTube's upcoming queue by duration using native reorder operations.",

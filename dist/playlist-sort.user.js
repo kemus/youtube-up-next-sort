@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.1.0
+// @version      0.1.1
 // @description  Sort loaded upcoming videos by duration using YouTube's native reorder handler.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
@@ -202,21 +202,28 @@
     if (panel.querySelector(HOST_TAG)) return;
     const host = document.createElement(HOST_TAG);
     const root = host.attachShadow({ mode: "open" });
-    root.innerHTML = `<style>
+    const style = document.createElement("style");
+    style.textContent = `
     :host { display: block; color: var(--yt-spec-text-primary, #eee); font: 13px/1.45 system-ui, sans-serif; }
     .box { padding: 10px 12px; background: var(--yt-spec-badge-chip-background, #272727); border-radius: 10px; margin: 6px 0; }
     button { border: 0; border-radius: 18px; padding: 8px 14px; background: #3ea6ff; color: #101010; font: 600 13px system-ui, sans-serif; cursor: pointer; }
     button:disabled { opacity: .55; cursor: wait; }
     button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     p { margin: 6px 0 0; } .detail { opacity: .8; font-size: 12px; }
-  </style><div class="box">
-    <button type="button">Shortest \u2192 longest</button>
-    <p role="status" aria-live="polite">Sort loaded upcoming videos; keep the current video playing.</p>
-    <p class="detail"></p>
-  </div>`;
-    const button = root.querySelector("button");
-    const status = root.querySelector('[role="status"]');
-    const detail = root.querySelector(".detail");
+  `;
+    const box = document.createElement("div");
+    box.className = "box";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Shortest \u2192 longest";
+    const status = document.createElement("p");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.textContent = "Sort loaded upcoming videos; keep the current video playing.";
+    const detail = document.createElement("p");
+    detail.className = "detail";
+    box.append(button, status, detail);
+    root.append(style, box);
     const report = (message) => {
       status.textContent = message;
     };

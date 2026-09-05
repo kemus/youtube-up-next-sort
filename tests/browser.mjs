@@ -8,8 +8,17 @@ const expected = ['past', 'current', 'short', 'tie', 'minute', 'long', 'live', '
 async function fixture(page, mode = 'normal', extra = {}) {
   await page.goto('about:blank');
   await page.evaluate((mode, extra) => {
-    document.body.innerHTML = '<ytd-playlist-panel-renderer><div id="items"></div></ytd-playlist-panel-renderer>';
-    const panel = document.querySelector('ytd-playlist-panel-renderer');
+    const panel = document.createElement('ytd-playlist-panel-renderer');
+    const items = document.createElement('div');
+    items.id = 'items';
+    panel.append(items);
+    document.body.replaceChildren(panel);
+    if (mode === 'trusted-types') {
+      const csp = document.createElement('meta');
+      csp.httpEquiv = 'Content-Security-Policy';
+      csp.content = "require-trusted-types-for 'script'; trusted-types 'none'";
+      document.head.append(csp);
+    }
     const entries = [
       ['past', '9:00'], ['current', '10:00'], ['long', '4:00'],
       ['short', '0:15'], ['tie', '0:15'], ['live', 'LIVE'], ['unknown', ''], ['minute', '1:00'],
@@ -52,7 +61,9 @@ async function fixture(page, mode = 'normal', extra = {}) {
     };
     render();
   }, mode, extra);
-  await page.addScriptTag({ content: source });
+  // Evaluate through the test debugger so the userscript runs with the page's
+  // Trusted Types checks, without creating a blocked inline <script> element.
+  await page.evaluate(source);
 }
 
 const click = page => page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button').click());
@@ -115,7 +126,25 @@ for (const [browserName, executablePath] of [
     assert.match(actual.detail, /saved playlist order/);
     await page.addScriptTag({ content: source });
     assert.equal(await page.$$('yt-up-next-duration-sort').then(hosts => hosts.length), 1);
-    console.log(`${browserName}: 10 browser fixture scenarios passed`);
+
+    await fixture(page, 'trusted-types');
+    // Confirm that this regression test really enforces Trusted Types.
+    assert.equal(await page.evaluate(() => {
+      try { document.createElement('div').innerHTML = '<b>blocked</b>'; return false; }
+      catch { return true; }
+    }), true);
+    const bounds = await page.evaluate(() => {
+      const button = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button');
+      const rect = button.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    assert.ok(bounds.width > 0 && bounds.height > 0);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, expected);
+    assert.equal(actual.next, 'short');
+    assert.match(actual.status, /^Sorted loaded/);
+    console.log(`${browserName}: 11 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }
