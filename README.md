@@ -17,8 +17,9 @@ localhost and serves the compiled script. Stop it with Ctrl+C after installation
 If your manager doesn't intercept the link, use the editor installation above.
 
 Open a queue or a playing, editable playlist, expand its panel, and click
-**Shortest → longest**. Start with a short queue whose items are all loaded.
-The button becomes **Stop sorting** while moves run.
+**Duration ↑**. Start with a short queue whose items are all loaded.
+The small neutral button becomes **Stop** while moves run. Scope and playlist
+details are in its hover tooltip; only errors or required actions show extra text.
 
 The script needs to run in YouTube's page context to access its native handler.
 Its metadata requests that context in Tampermonkey and Violentmonkey. If the script
@@ -28,7 +29,7 @@ reports that it cannot read the queue, check your manager's injection setting.
 
 - Works only where YouTube exposes native reordering with drag handles.
 - Only already-loaded items after the selected video are sorted. It does not
-  scroll or fetch missing items. The panel reports a partial count when available.
+  scroll or fetch missing items. The button tooltip reports a partial count when available.
 - Shuffle must be off. Radio/mix lists and unsupported layouts stop with a message.
 - **Moving items in an editable saved playlist can also save the new order**, just
   as manual dragging does. This is not a temporary-playlist replacement.

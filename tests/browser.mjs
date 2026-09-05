@@ -73,7 +73,7 @@ const result = page => page.evaluate(() => ({
   visible: [...document.querySelectorAll('#items > *')].map(row => row.data.playlistSetVideoId),
   next: window.fixture.playerNext, moves: window.fixture.moves,
   status: document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[role=status]').textContent,
-  detail: document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('.detail').textContent,
+  detail: document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button').title,
 }));
 
 for (const [browserName, executablePath] of [

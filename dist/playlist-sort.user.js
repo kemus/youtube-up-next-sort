@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.1.1
+// @version      0.1.2
 // @description  Sort loaded upcoming videos by duration using YouTube's native reorder handler.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
@@ -204,28 +204,25 @@
     const root = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
-    :host { display: block; color: var(--yt-spec-text-primary, #eee); font: 13px/1.45 system-ui, sans-serif; }
-    .box { padding: 10px 12px; background: var(--yt-spec-badge-chip-background, #272727); border-radius: 10px; margin: 6px 0; }
-    button { border: 0; border-radius: 18px; padding: 8px 14px; background: #3ea6ff; color: #101010; font: 600 13px system-ui, sans-serif; cursor: pointer; }
-    button:disabled { opacity: .55; cursor: wait; }
+    :host { display: block; padding: 4px 8px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
+    button { border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 3px 7px; background: transparent; color: inherit; font: 400 11px/16px system-ui, sans-serif; cursor: pointer; }
+    button:hover { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-    p { margin: 6px 0 0; } .detail { opacity: .8; font-size: 12px; }
+    .notice { margin: 4px 0 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `;
-    const box = document.createElement("div");
-    box.className = "box";
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Shortest \u2192 longest";
+    button.textContent = "Duration \u2191";
+    button.setAttribute("aria-label", "Sort upcoming videos by duration, shortest first");
     const status = document.createElement("p");
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
-    status.textContent = "Sort loaded upcoming videos; keep the current video playing.";
-    const detail = document.createElement("p");
-    detail.className = "detail";
-    box.append(button, status, detail);
-    root.append(style, box);
-    const report = (message) => {
+    status.className = "sr-only";
+    root.append(style, button, status);
+    const report = (message, attention = false) => {
       status.textContent = message;
+      status.className = attention ? "notice" : "sr-only";
     };
     function describe() {
       try {
@@ -233,9 +230,9 @@
         const upcoming = snapshot.items.length - snapshot.currentIndex - 1;
         const unknown = snapshot.items.slice(snapshot.currentIndex + 1).filter((item) => item.duration === null).length;
         const scope = snapshot.total !== null && snapshot.total > snapshot.items.length ? `Loaded ${snapshot.items.length} of ${snapshot.total}; unloaded items stay outside this sort.` : `${upcoming} upcoming loaded videos.`;
-        detail.textContent = `${scope} ${unknown ? `${unknown} live/unknown durations go last. ` : ""}${snapshot.playlistId.startsWith("TLPQ") ? "Uses native queue moves." : "Native playlist moves can also change the saved playlist order."}`;
+        button.title = `Sort shortest to longest; keep the current video fixed. ${scope} ${unknown ? `${unknown} live/unknown durations go last. ` : ""}${snapshot.playlistId.startsWith("TLPQ") ? "" : "Native playlist moves can also change the saved playlist order."}`.trim();
       } catch (error) {
-        detail.textContent = error instanceof Error ? error.message : String(error);
+        button.title = error instanceof Error ? error.message : String(error);
       }
     }
     button.addEventListener("click", async (event) => {
@@ -245,32 +242,34 @@
         return;
       }
       if (running) {
-        report("Another queue sort is running.");
+        report("Another queue sort is running.", true);
         return;
       }
       const abort = new AbortController();
       running = abort;
       button.dataset.running = "true";
-      button.textContent = "Stop sorting";
-      describe();
+      button.textContent = "Stop";
+      button.title = "Stop sorting";
+      button.setAttribute("aria-label", "Stop sorting");
       report("Reading upcoming durations\u2026");
       try {
         const snapshot = readSnapshot(panel);
         if (snapshot.items.length - snapshot.currentIndex - 1 < 2) {
-          report("Load at least two upcoming videos to sort.");
+          report("Load at least two upcoming videos to sort.", true);
         } else if (snapshot.items.slice(snapshot.currentIndex + 1).every((item) => item.duration === null)) {
-          report("No durations are available yet. Wait for the thumbnails and try again.");
+          report("No durations are available yet. Wait for the thumbnails and try again.", true);
         } else {
           const moves = await sortPanel(panel, abort.signal, report);
           report(moves ? `Sorted loaded upcoming videos, shortest first (${moves} native moves).` : "Upcoming videos are already shortest first.");
         }
       } catch (error) {
-        report(abort.signal.aborted ? "Stopped. Completed native moves remain applied." : error instanceof Error ? error.message : String(error));
+        report(abort.signal.aborted ? "Stopped. Completed native moves remain applied." : error instanceof Error ? error.message : String(error), !abort.signal.aborted);
         if (!abort.signal.aborted) console.warn("[YouTube Up Next Sort]", error);
       } finally {
         running = null;
         delete button.dataset.running;
-        button.textContent = "Shortest \u2192 longest";
+        button.textContent = "Duration \u2191";
+        button.setAttribute("aria-label", "Sort upcoming videos by duration, shortest first");
         describe();
       }
     });
