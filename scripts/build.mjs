@@ -14,7 +14,7 @@ await build({
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
 // @version      ${version}
-// @description  Sort loaded upcoming videos by duration using YouTube's native reorder handler.
+// @description  Sort upcoming videos by duration, title, or available posting date. Click to cycle ascending, descending, and undo.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
 // @grant        none

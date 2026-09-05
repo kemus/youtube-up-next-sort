@@ -4,6 +4,8 @@ import puppeteer from 'puppeteer-core';
 
 const source = await readFile(new URL('../dist/playlist-sort.user.js', import.meta.url), 'utf8');
 const expected = ['past', 'current', 'short', 'tie', 'minute', 'long', 'live', 'unknown'];
+const original = ['past', 'current', 'long', 'short', 'tie', 'live', 'unknown', 'minute'];
+const descending = ['past', 'current', 'long', 'minute', 'short', 'tie', 'live', 'unknown'];
 
 async function fixture(page, mode = 'normal', extra = {}) {
   await page.goto('about:blank');
@@ -90,9 +92,10 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(actual.visible, expected);
     assert.equal(actual.next, 'short'); // Independent player state must also update.
     assert.match(actual.status, /^Sorted loaded/);
-    const moves = actual.moves;
     await click(page); await settled(page);
-    assert.equal((await result(page)).moves, moves);
+    assert.deepEqual((await result(page)).order, descending);
+    await click(page); await settled(page);
+    assert.deepEqual((await result(page)).order, original);
 
     for (const mode of ['throw', 'noop']) {
       await fixture(page, mode); await click(page); await settled(page);

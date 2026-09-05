@@ -1,4 +1,4 @@
-import { parseDuration, sameOrder, sortUpcoming, type Item } from './sort.ts';
+import { parseDuration, parsePostedDate, sameOrder, type Item } from './sort.ts';
 
 type RecordValue = Record<string, unknown>;
 type NativeElement = HTMLElement & {
@@ -58,6 +58,15 @@ function durationOf(data: RecordValue, row: HTMLElement): number | null {
   return null;
 }
 
+function postedDateOf(data: RecordValue, now: number): number | null {
+  for (const field of ['publishDate', 'datePublished', 'publishedTimeText']) {
+    const raw = data[field];
+    const timestamp = parsePostedDate(typeof raw === 'string' ? raw : textOf(raw), now);
+    if (timestamp !== null) return timestamp;
+  }
+  return null;
+}
+
 export function readSnapshot(panel: HTMLElement): Snapshot {
   if (!panel.isConnected) throw new Error('The queue panel was closed.');
   const controller = controllerOf(panel as NativeElement);
@@ -85,6 +94,7 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
   if (rows.some((row, index) => container.childNodes[index] !== row)) {
     throw new Error('Unsupported queue layout: video rows are not contiguous.');
   }
+  const now = Date.now();
   const items = entries.map((entry, index): Item => {
     const row = rows[index]!;
     const rowData = row.data;
@@ -92,7 +102,11 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
     if (typeof id !== 'string' || !id || rowData?.playlistSetVideoId !== id) {
       throw new Error('Queue data and visible rows disagree. Wait for YouTube to finish updating.');
     }
-    return { id, duration: durationOf(entry, row) };
+    return {
+      id, duration: durationOf(entry, row),
+      title: textOf(entry.title).trim() || row.querySelector('#video-title')?.textContent?.trim() || null,
+      postedAt: postedDateOf(entry, now),
+    };
   });
   if (new Set(items.map(item => item.id)).size !== items.length) {
     throw new Error('Queue occurrence identifiers are missing or duplicated.');
@@ -115,13 +129,19 @@ function checkSession(snapshot: Snapshot, initial: Snapshot): void {
   }
 }
 
-export async function sortPanel(
+export async function reorderPanel(
   panel: HTMLElement,
+  initial: Snapshot,
+  target: string[],
   signal: AbortSignal,
   report: (message: string) => void,
 ): Promise<number> {
-  const initial = readSnapshot(panel);
-  const target = sortUpcoming(initial.items, initial.currentIndex).map(item => item.id);
+  const original = ids(initial);
+  if (target.length !== original.length || new Set(target).size !== target.length ||
+      target.some(id => !original.includes(id)) ||
+      !sameOrder(target.slice(0, initial.currentIndex + 1), original.slice(0, initial.currentIndex + 1))) {
+    throw new Error('The requested order no longer matches this queue.');
+  }
   let expected = ids(initial);
   let moves = 0;
   for (let position = initial.currentIndex + 1; position < target.length; position++) {
@@ -173,7 +193,7 @@ export async function sortPanel(
     }
     expected = nextOrder;
     moves++;
-    report(`Shortest first: ${position - initial.currentIndex}/${target.length - initial.currentIndex - 1} upcoming positions checked…`);
+    report(`Sorting: ${position - initial.currentIndex}/${target.length - initial.currentIndex - 1} upcoming positions checked…`);
     // Give native refreshes time to arrive; never flood the drag handler.
     await delay(350);
   }

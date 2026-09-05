@@ -1,9 +1,9 @@
-# YouTube Up Next — Shortest First
+# YouTube Up Next Sort
 
-A TypeScript userscript prototype that sorts **loaded upcoming videos by duration,
-shortest to longest**, using the same native handler as YouTube's manual dragging.
-The current video and everything before it stay fixed. Equal durations preserve
-their existing order. Live, upcoming, and unknown durations go last.
+A TypeScript userscript that sorts **loaded upcoming videos** using the same
+native handler as YouTube's manual dragging. The current video and everything
+before it stay fixed. Equal values preserve their order from before the sort
+cycle. Live, upcoming, and unknown durations go last in both directions.
 
 ## Install in Firefox
 
@@ -16,10 +16,27 @@ Alternatively, with Node installed, run `npm run serve` and open
 localhost and serves the compiled script. Stop it with Ctrl+C after installation.
 If your manager doesn't intercept the link, use the editor installation above.
 
-Open a queue or a playing, editable playlist, expand its panel, and click
-**Duration ↑**. Start with a short queue whose items are all loaded.
-The small neutral button becomes **Stop** while moves run. Scope and playlist
-details are in its hover tooltip; only errors or required actions show extra text.
+Open a queue or a playing, editable playlist and expand its panel. Each small
+neutral button cycles through three actions:
+
+| Button | First click | Second click | Third click |
+| --- | --- | --- | --- |
+| Duration | Shortest → longest | Longest → shortest | Undo |
+| Title | A → Z | Z → A | Undo |
+| Date, when available | Oldest → newest | Newest → oldest | Undo |
+
+The arrow shows the applied direction. Hover for the next action. Undo restores
+the order from before that button's first click. Switching to another sort starts
+a fresh cycle from the current order. Playback, membership, or external order
+changes reset the cycle; reloading also clears undo history.
+
+**Date** appears only when every loaded upcoming item already carries a posting
+date in YouTube's page data. The script never fetches extra metadata for it and
+never substitutes the date added to the playlist. ISO dates and recognizable
+English relative posting ages are supported; relative ages are approximate.
+
+The active button becomes **Stop** while moves run. Scope and playlist details
+are in hover tooltips; only errors or required actions show extra text.
 
 The script needs to run in YouTube's page context to access its native handler.
 Its metadata requests that context in Tampermonkey and Violentmonkey. If the script
@@ -37,7 +54,8 @@ reports that it cannot read the queue, check your manager's injection setting.
   This is not server acknowledgement: YouTube handles its own network requests
   and may reject or revert an update later.
 - Stopping leaves completed moves applied. Playback changes, additions/removals,
-  or unexpected reorders stop further moves.
+  or unexpected reorders stop further moves. After an interrupted sort, the next
+  click offers undo if the same queue and current item still permit restoration.
 - YouTube's handler is undocumented and may change. The script has no private
   HTTP client, OAuth flow, cookie access, or third-party runtime dependencies.
 
@@ -66,7 +84,7 @@ order. Repeat in a disposable editable playlist if you want playlist coverage.
 
 ## Source and integration
 
-- `src/sort.ts`: pure duration parsing and stable tail sorting.
+- `src/sort.ts`: duration/date parsing and stable tail sorting by each key.
 - `src/youtube.ts`: native queue snapshots, moves, and verification.
 - `src/userscript.ts`: panel control and navigation lifecycle.
 - `scripts/build.mjs`: TypeScript bundle and userscript metadata.
@@ -87,6 +105,6 @@ enforcement. A public Firefox Developer Edition probe reproduced the v0.1.0 UI
 failure (`ShadowRoot.innerHTML` rejected by YouTube's policy) and confirmed the
 v0.1.1 button is visible on the real watch page after replacing HTML-string
 insertion with DOM creation. The earlier signed-out probe confirmed the native
-controller and item data shapes but did not produce an editable queue. Actual
-native reordering and playback on YouTube still require the live acceptance
-check above.
+controller and item data shapes but did not produce an editable queue. The user
+subsequently reported that sorting works in their live session. Version 0.2.0
+adds the sort cycles; no further browser testing was run at the user's request.

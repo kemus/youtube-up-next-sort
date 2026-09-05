@@ -1,9 +1,9 @@
 {
   "name": "youtube-up-next-sort",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Sort YouTube's upcoming queue by duration using native reorder operations.",
+  "description": "Cycle native YouTube queue sorting by duration, title, and available posting date.",
   "engines": {
     "node": ">=22.18.0"
   },

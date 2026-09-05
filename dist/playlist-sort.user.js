@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.1.2
-// @description  Sort loaded upcoming videos by duration using YouTube's native reorder handler.
+// @version      0.2.0
+// @description  Sort upcoming videos by duration, title, or available posting date. Click to cycle ascending, descending, and undo.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
 // @grant        none
@@ -13,6 +13,7 @@
 "use strict";
 (() => {
   // src/sort.ts
+  var titleOrder = new Intl.Collator(void 0, { numeric: true, sensitivity: "base" });
   function parseDuration(text) {
     const value = text.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
     if (!/^\d+:\d{2}(?::\d{2})?$/.test(value)) return null;
@@ -21,7 +22,19 @@
     const seconds = parts.reduce((total, part) => total * 60 + part, 0);
     return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
   }
-  function sortUpcoming(items, currentIndex) {
+  function parsePostedDate(text, now = Date.now()) {
+    const value = text.trim();
+    if (/^\d{4}-\d{2}-\d{2}(?:T[\d:.]+(?:Z|[+-]\d{2}:?\d{2}))?$/.test(value)) {
+      const timestamp2 = Date.parse(value);
+      return Number.isFinite(timestamp2) && timestamp2 <= now ? timestamp2 : null;
+    }
+    const relative = /^(?:(?:Streamed|Premiered)\s+)?(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i.exec(value);
+    if (!relative) return null;
+    const units = { second: 1, minute: 60, hour: 3600, day: 86400, week: 604800, month: 2629800, year: 31557600 };
+    const timestamp = now - Number(relative[1]) * units[relative[2].toLowerCase()] * 1e3;
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  function sortUpcoming(items, currentIndex, key = "duration", direction = "asc") {
     if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= items.length) {
       throw new Error("Cannot identify the currently playing item.");
     }
@@ -29,10 +42,13 @@
       throw new Error("YouTube did not provide unique queue item identifiers.");
     }
     const upcoming = items.slice(currentIndex + 1).map((item, index) => ({ item, index }));
+    const value = (item) => key === "title" ? item.title?.trim() || null : key === "date" ? item.postedAt ?? null : item.duration;
     upcoming.sort((a, b) => {
-      const left = a.item.duration ?? Infinity;
-      const right = b.item.duration ?? Infinity;
-      return (left < right ? -1 : left > right ? 1 : 0) || a.index - b.index;
+      const left = value(a.item);
+      const right = value(b.item);
+      if (left === null || right === null) return left === right ? a.index - b.index : left === null ? 1 : -1;
+      const comparison = typeof left === "string" && typeof right === "string" ? titleOrder.compare(left, right) : left < right ? -1 : left > right ? 1 : 0;
+      return comparison * (direction === "asc" ? 1 : -1) || a.index - b.index;
     });
     return [...items.slice(0, currentIndex + 1), ...upcoming.map((entry) => entry.item)];
   }
@@ -69,6 +85,14 @@
     }
     return null;
   }
+  function postedDateOf(data, now) {
+    for (const field of ["publishDate", "datePublished", "publishedTimeText"]) {
+      const raw = data[field];
+      const timestamp = parsePostedDate(typeof raw === "string" ? raw : textOf(raw), now);
+      if (timestamp !== null) return timestamp;
+    }
+    return null;
+  }
   function readSnapshot(panel) {
     if (!panel.isConnected) throw new Error("The queue panel was closed.");
     const controller = controllerOf(panel);
@@ -93,6 +117,7 @@
     if (rows.some((row, index) => container.childNodes[index] !== row)) {
       throw new Error("Unsupported queue layout: video rows are not contiguous.");
     }
+    const now = Date.now();
     const items = entries.map((entry, index) => {
       const row = rows[index];
       const rowData = row.data;
@@ -100,7 +125,12 @@
       if (typeof id !== "string" || !id || rowData?.playlistSetVideoId !== id) {
         throw new Error("Queue data and visible rows disagree. Wait for YouTube to finish updating.");
       }
-      return { id, duration: durationOf(entry, row) };
+      return {
+        id,
+        duration: durationOf(entry, row),
+        title: textOf(entry.title).trim() || row.querySelector("#video-title")?.textContent?.trim() || null,
+        postedAt: postedDateOf(entry, now)
+      };
     });
     if (new Set(items.map((item) => item.id)).size !== items.length) {
       throw new Error("Queue occurrence identifiers are missing or duplicated.");
@@ -119,9 +149,11 @@
       throw new Error("Playback or the queue changed. Sorting stopped; completed moves remain applied.");
     }
   }
-  async function sortPanel(panel, signal, report) {
-    const initial = readSnapshot(panel);
-    const target = sortUpcoming(initial.items, initial.currentIndex).map((item) => item.id);
+  async function reorderPanel(panel, initial, target, signal, report) {
+    const original = ids(initial);
+    if (target.length !== original.length || new Set(target).size !== target.length || target.some((id) => !original.includes(id)) || !sameOrder(target.slice(0, initial.currentIndex + 1), original.slice(0, initial.currentIndex + 1))) {
+      throw new Error("The requested order no longer matches this queue.");
+    }
     let expected = ids(initial);
     let moves = 0;
     for (let position = initial.currentIndex + 1; position < target.length; position++) {
@@ -176,7 +208,7 @@
       }
       expected = nextOrder;
       moves++;
-      report(`Shortest first: ${position - initial.currentIndex}/${target.length - initial.currentIndex - 1} upcoming positions checked\u2026`);
+      report(`Sorting: ${position - initial.currentIndex}/${target.length - initial.currentIndex - 1} upcoming positions checked\u2026`);
       await delay(350);
     }
     signal.throwIfAborted();
@@ -198,6 +230,28 @@
   // src/userscript.ts
   var HOST_TAG = "yt-up-next-duration-sort";
   var running = null;
+  var cycles = /* @__PURE__ */ new Map();
+  var controls = /* @__PURE__ */ new Map();
+  var names = { duration: "Duration", title: "Title", date: "Date" };
+  var descriptions = {
+    duration: { asc: "shortest to longest", desc: "longest to shortest" },
+    title: { asc: "A to Z", desc: "Z to A" },
+    date: { asc: "oldest to newest", desc: "newest to oldest" }
+  };
+  var ids2 = (snapshot) => snapshot.items.map((item) => item.id);
+  function matchingCycle(snapshot) {
+    const cycle = cycles.get(snapshot.playlistId);
+    return cycle && cycle.currentIndex === snapshot.currentIndex && cycle.currentId === snapshot.items[snapshot.currentIndex]?.id && sameOrder(cycle.expected, ids2(snapshot)) ? cycle : void 0;
+  }
+  function nextStep(cycle, key) {
+    return cycle?.key !== key ? "asc" : cycle.phase === "asc" ? "desc" : "undo";
+  }
+  function refreshControls() {
+    for (const [host, refresh] of controls) {
+      if (host.isConnected) refresh();
+      else controls.delete(host);
+    }
+  }
   function mount(panel) {
     if (panel.querySelector(HOST_TAG)) return;
     const host = document.createElement(HOST_TAG);
@@ -205,37 +259,58 @@
     const style = document.createElement("style");
     style.textContent = `
     :host { display: block; padding: 4px 8px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
-    button { border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 3px 7px; background: transparent; color: inherit; font: 400 11px/16px system-ui, sans-serif; cursor: pointer; }
+    button { border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 3px 7px; margin-right: 4px; background: transparent; color: inherit; font: 400 11px/16px system-ui, sans-serif; cursor: pointer; }
+    button[aria-pressed="true"] { color: var(--yt-spec-text-primary, #eee); }
+    button:disabled { opacity: .5; cursor: default; }
+    button[hidden] { display: none; }
     button:hover { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .notice { margin: 4px 0 0; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "Duration \u2191";
-    button.setAttribute("aria-label", "Sort upcoming videos by duration, shortest first");
+    const buttons = /* @__PURE__ */ new Map();
+    for (const key of ["duration", "title", "date"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.sort = key;
+      button.textContent = names[key];
+      button.hidden = key === "date";
+      buttons.set(key, button);
+    }
     const status = document.createElement("p");
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     status.className = "sr-only";
-    root.append(style, button, status);
+    root.append(style, ...buttons.values(), status);
     const report = (message, attention = false) => {
       status.textContent = message;
       status.className = attention ? "notice" : "sr-only";
     };
     function describe() {
+      let snapshot;
+      let problem = "";
       try {
-        const snapshot = readSnapshot(panel);
-        const upcoming = snapshot.items.length - snapshot.currentIndex - 1;
-        const unknown = snapshot.items.slice(snapshot.currentIndex + 1).filter((item) => item.duration === null).length;
-        const scope = snapshot.total !== null && snapshot.total > snapshot.items.length ? `Loaded ${snapshot.items.length} of ${snapshot.total}; unloaded items stay outside this sort.` : `${upcoming} upcoming loaded videos.`;
-        button.title = `Sort shortest to longest; keep the current video fixed. ${scope} ${unknown ? `${unknown} live/unknown durations go last. ` : ""}${snapshot.playlistId.startsWith("TLPQ") ? "" : "Native playlist moves can also change the saved playlist order."}`.trim();
+        snapshot = readSnapshot(panel);
       } catch (error) {
-        button.title = error instanceof Error ? error.message : String(error);
+        problem = error instanceof Error ? error.message : String(error);
+      }
+      const cycle = snapshot ? matchingCycle(snapshot) : void 0;
+      const upcoming = snapshot?.items.slice(snapshot.currentIndex + 1) ?? [];
+      for (const [key, button] of buttons) {
+        if (button.dataset.running) continue;
+        const active = cycle?.key === key;
+        button.textContent = names[key] + (active ? cycle.phase === "asc" ? " \u2191" : cycle.phase === "desc" ? " \u2193" : " \u21B6" : "");
+        button.setAttribute("aria-pressed", String(active));
+        button.disabled = running !== null;
+        button.hidden = key === "date" && !active && !(upcoming.length > 1 && upcoming.every((item) => item.postedAt != null));
+        const step = nextStep(cycle, key);
+        const action = step === "undo" ? `Undo ${names[key].toLowerCase()} sorting; restore the order before this cycle.` : `Sort upcoming videos ${descriptions[key][step]}.`;
+        button.setAttribute("aria-label", action);
+        const scope = snapshot?.total !== null && snapshot?.total !== void 0 && snapshot.total > snapshot.items.length ? `Loaded ${snapshot.items.length} of ${snapshot.total}; only loaded upcoming videos are sorted.` : `${upcoming.length} upcoming loaded videos.`;
+        button.title = problem || `${action} Current video stays fixed. ${scope} ${snapshot?.playlistId.startsWith("TLPQ") ? "" : "Native playlist moves can also change the saved playlist order."} ${key === "date" ? "Uses existing posting dates; relative ages are approximate." : ""}`.trim();
       }
     }
-    button.addEventListener("click", async (event) => {
+    for (const [key, button] of buttons) button.addEventListener("click", async (event) => {
       event.stopPropagation();
       if (button.dataset.running === "true") {
         running?.abort();
@@ -251,29 +326,72 @@
       button.textContent = "Stop";
       button.title = "Stop sorting";
       button.setAttribute("aria-label", "Stop sorting");
-      report("Reading upcoming durations\u2026");
+      refreshControls();
+      report("Reading upcoming videos\u2026");
+      let attempted;
       try {
         const snapshot = readSnapshot(panel);
-        if (snapshot.items.length - snapshot.currentIndex - 1 < 2) {
+        const upcoming = snapshot.items.slice(snapshot.currentIndex + 1);
+        const existing = matchingCycle(snapshot);
+        const step = nextStep(existing, key);
+        if (upcoming.length < 2) {
           report("Load at least two upcoming videos to sort.", true);
-        } else if (snapshot.items.slice(snapshot.currentIndex + 1).every((item) => item.duration === null)) {
-          report("No durations are available yet. Wait for the thumbnails and try again.", true);
+        } else if (step !== "undo" && key === "date" && upcoming.some((item) => item.postedAt == null)) {
+          report("Posting dates are not available for all loaded upcoming videos.", true);
+        } else if (step !== "undo" && upcoming.every((item) => key === "duration" ? item.duration === null : key === "title" ? !item.title : false)) {
+          report(`No ${key === "title" ? "titles" : "durations"} are available yet.`, true);
         } else {
-          const moves = await sortPanel(panel, abort.signal, report);
-          report(moves ? `Sorted loaded upcoming videos, shortest first (${moves} native moves).` : "Upcoming videos are already shortest first.");
+          const baseline = existing?.key === key ? existing.baseline : ids2(snapshot);
+          const byId = new Map(snapshot.items.map((item) => [item.id, item]));
+          const target = step === "undo" ? baseline : sortUpcoming(
+            baseline.map((id) => byId.get(id)),
+            snapshot.currentIndex,
+            key,
+            step
+          ).map((item) => item.id);
+          const cycle = {
+            key,
+            phase: "partial",
+            baseline,
+            expected: ids2(snapshot),
+            currentIndex: snapshot.currentIndex,
+            currentId: snapshot.items[snapshot.currentIndex].id
+          };
+          cycles.set(snapshot.playlistId, cycle);
+          attempted = { playlistId: snapshot.playlistId, cycle };
+          const moves = await reorderPanel(panel, snapshot, target, abort.signal, report);
+          if (step === "undo") {
+            cycles.delete(snapshot.playlistId);
+            report("Restored the order from before this sort cycle.");
+          } else {
+            cycle.phase = step;
+            cycle.expected = target;
+            report(`Sorted loaded upcoming videos ${descriptions[key][step]} (${moves} native moves).`);
+          }
         }
       } catch (error) {
         report(abort.signal.aborted ? "Stopped. Completed native moves remain applied." : error instanceof Error ? error.message : String(error), !abort.signal.aborted);
         if (!abort.signal.aborted) console.warn("[YouTube Up Next Sort]", error);
+        if (attempted) {
+          try {
+            const after = readSnapshot(panel);
+            const { cycle } = attempted;
+            const order = ids2(after);
+            if (after.playlistId === attempted.playlistId && after.currentIndex === cycle.currentIndex && order.length === cycle.baseline.length && order.every((id) => cycle.baseline.includes(id)) && sameOrder(order.slice(0, after.currentIndex + 1), cycle.baseline.slice(0, after.currentIndex + 1))) {
+              cycle.expected = order;
+            } else cycles.delete(attempted.playlistId);
+          } catch {
+            cycles.delete(attempted.playlistId);
+          }
+        }
       } finally {
         running = null;
         delete button.dataset.running;
-        button.textContent = "Duration \u2191";
-        button.setAttribute("aria-label", "Sort upcoming videos by duration, shortest first");
-        describe();
+        refreshControls();
       }
     });
     panel.prepend(host);
+    controls.set(host, describe);
     describe();
     panel.addEventListener("yt-rendererstamper-finished", () => {
       if (!running) describe();
@@ -283,6 +401,7 @@
   function scan() {
     scheduled = false;
     document.querySelectorAll("ytd-playlist-panel-renderer").forEach(mount);
+    if (!running) refreshControls();
   }
   var observer = new MutationObserver(() => {
     if (scheduled) return;
@@ -290,7 +409,10 @@
     setTimeout(scan, 250);
   });
   observer.observe(document.body, { childList: true, subtree: true });
-  document.addEventListener("yt-navigate-start", () => running?.abort());
+  document.addEventListener("yt-navigate-start", () => {
+    running?.abort();
+    cycles.clear();
+  });
   document.addEventListener("yt-navigate-finish", scan);
   scan();
 })();
