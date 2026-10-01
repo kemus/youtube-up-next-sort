@@ -25,6 +25,11 @@ neutral button cycles through three actions:
 | Title | A → Z | Z → A | Undo |
 | Date, when available | Oldest → newest | Newest → oldest | Undo |
 
+When YouTube's queue header holds only its **Save** button, the script shows a
+matching Save button first in the same row and hides YouTube's now-empty row.
+Clicking it clicks YouTube's own Save button, which stays in the page. Layouts
+with other header controls, such as loop or shuffle, keep YouTube's row as is.
+
 The arrow shows the applied direction. Hover for the next action. Undo restores
 the order from before that button's first click. Switching to another sort starts
 a fresh cycle from the current order. Playback, membership, or external order
@@ -86,7 +91,7 @@ order. Repeat in a disposable editable playlist if you want playlist coverage.
 
 - `src/sort.ts`: duration/date parsing and stable tail sorting by each key.
 - `src/youtube.ts`: native queue snapshots, moves, and verification.
-- `src/userscript.ts`: panel control and navigation lifecycle.
+- `src/userscript.ts`: panel control, Save mirroring, and navigation lifecycle.
 - `scripts/build.mjs`: TypeScript bundle and userscript metadata.
 
 On 2026-09-04, inspection of YouTube's public frontend confirmed that
@@ -108,3 +113,9 @@ insertion with DOM creation. The earlier signed-out probe confirmed the native
 controller and item data shapes but did not produce an editable queue. The user
 subsequently reported that sorting works in their live session. Version 0.2.0
 adds the sort cycles; no further browser testing was run at the user's request.
+Version 0.3.0 moves Save into the sort row. On 2026-10-01, a dump from the user's
+signed-in queue located Save as the only control under `#playlist-actions`
+(`#flexible-item-buttons > ytd-button-renderer`). A signed-out probe of a public
+playlist confirmed that its item data has no view, like, or publish-date fields.
+Thirteen fixture scenarios each passed in Firefox and Chromium; the live Save
+button was not yet tested.

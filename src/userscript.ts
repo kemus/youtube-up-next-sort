@@ -35,6 +35,21 @@ function refreshControls(): void {
   }
 }
 
+/** YouTube's panel action row, only when its sole visible control is Save. */
+function nativeSave(panel: HTMLElement): { row: HTMLElement; button: HTMLButtonElement } | null {
+  const row = panel.querySelector<HTMLElement>('#playlist-actions');
+  if (!row) return null;
+  // Measure with this script's hiding lifted; nothing paints in between.
+  const display = row.style.display;
+  row.style.display = '';
+  const controls = Array.from(row.querySelectorAll<HTMLElement>('button, a[href], [role="button"]'))
+    .filter(control => control.getClientRects().length > 0);
+  row.style.display = display;
+  const button = controls[0];
+  return controls.length === 1 && button instanceof HTMLButtonElement && button.textContent?.trim() &&
+    button.closest('#flexible-item-buttons ytd-button-renderer') ? { row, button } : null;
+}
+
 function mount(panel: HTMLElement): void {
   if (panel.querySelector(HOST_TAG)) return;
   const host = document.createElement(HOST_TAG);
@@ -50,6 +65,8 @@ function mount(panel: HTMLElement): void {
     button[hidden] { display: none; }
     button:hover { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+    .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
+    .save svg { width: 14px; height: 14px; fill: currentColor; }
     .notice { margin: 4px 0 0; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `;
@@ -66,13 +83,49 @@ function mount(panel: HTMLElement): void {
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   status.className = 'sr-only';
-  root.append(style, ...buttons.values(), status);
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'save';
+  save.hidden = true;
+  root.append(style, save, ...buttons.values(), status);
   const report = (message: string, attention = false): void => {
     status.textContent = message;
     status.className = attention ? 'notice' : 'sr-only';
   };
+  let hiddenRow: { row: HTMLElement; display: string } | undefined;
+  let saveLook = '';
+  save.addEventListener('click', event => {
+    event.stopPropagation();
+    nativeSave(panel)?.button.click();
+  });
+
+  // Mirror YouTube's Save into this row and hide its own row, which then holds
+  // nothing else. YouTube's button stays in place and handles the click.
+  function syncSave(): void {
+    const native = nativeSave(panel);
+    if (hiddenRow && hiddenRow.row !== native?.row) {
+      hiddenRow.row.style.display = hiddenRow.display;
+      hiddenRow = undefined;
+    }
+    save.hidden = !native;
+    if (!native) return;
+    if (!hiddenRow) {
+      hiddenRow = { row: native.row, display: native.row.style.display };
+      native.row.style.display = 'none';
+    }
+    const label = native.button.textContent!.trim();
+    const icon = native.button.querySelector('svg');
+    if (saveLook !== `${label}|${icon !== null}`) {
+      saveLook = `${label}|${icon !== null}`;
+      save.replaceChildren(...(icon ? [icon.cloneNode(true)] : []), label);
+    }
+    save.setAttribute('aria-label', native.button.getAttribute('aria-label') || label);
+    save.title = native.button.getAttribute('aria-label') || label;
+    save.disabled = running !== null;
+  }
 
   function describe(): void {
+    syncSave();
     let snapshot: Snapshot | undefined;
     let problem = '';
     try {

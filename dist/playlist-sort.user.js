@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.2.0
+// @version      0.3.0
 // @description  Sort upcoming videos by duration, title, or available posting date. Click to cycle ascending, descending, and undo.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
@@ -252,6 +252,16 @@
       else controls.delete(host);
     }
   }
+  function nativeSave(panel) {
+    const row = panel.querySelector("#playlist-actions");
+    if (!row) return null;
+    const display = row.style.display;
+    row.style.display = "";
+    const controls2 = Array.from(row.querySelectorAll('button, a[href], [role="button"]')).filter((control) => control.getClientRects().length > 0);
+    row.style.display = display;
+    const button = controls2[0];
+    return controls2.length === 1 && button instanceof HTMLButtonElement && button.textContent?.trim() && button.closest("#flexible-item-buttons ytd-button-renderer") ? { row, button } : null;
+  }
   function mount(panel) {
     if (panel.querySelector(HOST_TAG)) return;
     const host = document.createElement(HOST_TAG);
@@ -265,6 +275,8 @@
     button[hidden] { display: none; }
     button:hover { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+    .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
+    .save svg { width: 14px; height: 14px; fill: currentColor; }
     .notice { margin: 4px 0 0; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `;
@@ -281,12 +293,45 @@
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     status.className = "sr-only";
-    root.append(style, ...buttons.values(), status);
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "save";
+    save.hidden = true;
+    root.append(style, save, ...buttons.values(), status);
     const report = (message, attention = false) => {
       status.textContent = message;
       status.className = attention ? "notice" : "sr-only";
     };
+    let hiddenRow;
+    let saveLook = "";
+    save.addEventListener("click", (event) => {
+      event.stopPropagation();
+      nativeSave(panel)?.button.click();
+    });
+    function syncSave() {
+      const native = nativeSave(panel);
+      if (hiddenRow && hiddenRow.row !== native?.row) {
+        hiddenRow.row.style.display = hiddenRow.display;
+        hiddenRow = void 0;
+      }
+      save.hidden = !native;
+      if (!native) return;
+      if (!hiddenRow) {
+        hiddenRow = { row: native.row, display: native.row.style.display };
+        native.row.style.display = "none";
+      }
+      const label = native.button.textContent.trim();
+      const icon = native.button.querySelector("svg");
+      if (saveLook !== `${label}|${icon !== null}`) {
+        saveLook = `${label}|${icon !== null}`;
+        save.replaceChildren(...icon ? [icon.cloneNode(true)] : [], label);
+      }
+      save.setAttribute("aria-label", native.button.getAttribute("aria-label") || label);
+      save.title = native.button.getAttribute("aria-label") || label;
+      save.disabled = running !== null;
+    }
     function describe() {
+      syncSave();
       let snapshot;
       let problem = "";
       try {

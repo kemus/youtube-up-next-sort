@@ -13,7 +13,21 @@ async function fixture(page, mode = 'normal', extra = {}) {
     const panel = document.createElement('ytd-playlist-panel-renderer');
     const items = document.createElement('div');
     items.id = 'items';
-    panel.append(items);
+    // YouTube's queue header row, where Save is the only visible control.
+    const actions = document.createElement('div');
+    actions.id = 'playlist-actions';
+    const flexible = document.createElement('div');
+    flexible.id = 'flexible-item-buttons';
+    const renderer = document.createElement('ytd-button-renderer');
+    const save = document.createElement('button');
+    save.setAttribute('aria-label', 'Save queue');
+    save.append(document.createElementNS('http://www.w3.org/2000/svg', 'svg'), 'Save');
+    save.addEventListener('click', () => window.fixture.saves++);
+    renderer.append(save);
+    flexible.append(renderer);
+    actions.append(flexible);
+    if (extra.extraAction) actions.append(Object.assign(document.createElement('button'), { textContent: 'Loop' }));
+    panel.append(actions, items);
     document.body.replaceChildren(panel);
     if (mode === 'trusted-types') {
       const csp = document.createElement('meta');
@@ -30,7 +44,7 @@ async function fixture(page, mode = 'normal', extra = {}) {
       isLive: id === 'live',
     } }));
     const data = { contents: entries, playlistId: 'TLPQ-fixture', currentIndex: 1, totalVideos: entries.length, ...extra };
-    const state = window.fixture = { moves: 0, playerNext: 'long', data };
+    const state = window.fixture = { moves: 0, saves: 0, playerNext: 'long', data };
     const render = () => {
       panel.querySelector('#items').replaceChildren(...data.contents.map(entry => {
         const row = document.createElement('ytd-playlist-panel-video-renderer');
@@ -68,14 +82,14 @@ async function fixture(page, mode = 'normal', extra = {}) {
   await page.evaluate(source);
 }
 
-const click = page => page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button').click());
-const settled = page => page.waitForFunction(() => !document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button').dataset.running, { timeout: 12000 });
+const click = page => page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button[data-sort]').click());
+const settled = page => page.waitForFunction(() => !document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button[data-sort]').dataset.running, { timeout: 12000 });
 const result = page => page.evaluate(() => ({
   order: window.fixture.data.contents.map(entry => entry.playlistPanelVideoRenderer.playlistSetVideoId),
   visible: [...document.querySelectorAll('#items > *')].map(row => row.data.playlistSetVideoId),
   next: window.fixture.playerNext, moves: window.fixture.moves,
   status: document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[role=status]').textContent,
-  detail: document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button').title,
+  detail: document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button[data-sort]').title,
 }));
 
 for (const [browserName, executablePath] of [
@@ -86,6 +100,14 @@ for (const [browserName, executablePath] of [
   try {
     const page = await browser.newPage();
     await fixture(page);
+    const saveState = () => page.evaluate(() => {
+      const proxy = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('.save');
+      return { hidden: proxy.hidden, text: proxy.textContent, icon: proxy.querySelector('svg') !== null,
+        label: proxy.getAttribute('aria-label'), row: document.querySelector('#playlist-actions').style.display };
+    });
+    assert.deepEqual(await saveState(), { hidden: false, text: 'Save', icon: true, label: 'Save queue', row: 'none' });
+    await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('.save').click());
+    assert.equal(await page.evaluate(() => window.fixture.saves), 1);
     await click(page); await settled(page);
     let actual = await result(page);
     assert.deepEqual(actual.order, expected);
@@ -110,6 +132,9 @@ for (const [browserName, executablePath] of [
       assert.equal(actual.moves, 1);
       assert.match(actual.status, /changed|change/);
     }
+    await fixture(page, 'normal', { extraAction: true });
+    assert.deepEqual(await saveState().then(({ hidden, row }) => ({ hidden, row })), { hidden: true, row: '' });
+
     await fixture(page, 'normal', { shuffleOn: true }); await click(page); await settled(page);
     assert.equal((await result(page)).moves, 0);
     assert.match((await result(page)).status, /shuffle/);
@@ -137,7 +162,7 @@ for (const [browserName, executablePath] of [
       catch { return true; }
     }), true);
     const bounds = await page.evaluate(() => {
-      const button = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button');
+      const button = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button[data-sort]');
       const rect = button.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
     });
@@ -147,7 +172,7 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(actual.order, expected);
     assert.equal(actual.next, 'short');
     assert.match(actual.status, /^Sorted loaded/);
-    console.log(`${browserName}: 11 browser fixture scenarios passed`);
+    console.log(`${browserName}: 13 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }
