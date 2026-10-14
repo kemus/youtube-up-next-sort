@@ -81,8 +81,15 @@ function mount(panel: HTMLElement): void {
     button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
     .save svg { width: 14px; height: 14px; fill: currentColor; }
-    .settings label { display: block; margin: 3px 0; }
-    .settings input[type="password"] { display: block; box-sizing: border-box; width: 100%; max-width: 320px; margin-top: 2px; padding: 3px 6px; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; background: transparent; color: var(--yt-spec-text-primary, #eee); font: inherit; }
+    .settings label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .settings .key { display: flex; align-items: center; gap: 4px; max-width: 420px; margin-bottom: 4px; }
+    .settings .key button { margin: 0; }
+    .settings input[type="password"] { flex: 1; min-width: 0; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; background: transparent; color: var(--yt-spec-text-primary, #eee); font: inherit; }
+    /* The knob is a gradient: Firefox draws no ::before on inputs. */
+    .settings input[role="switch"] { appearance: none; flex: none; width: 26px; height: 14px; margin: 0; border-radius: 7px; cursor: pointer;
+      background: radial-gradient(circle at 7px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-10-percent-layer, #555); }
+    .settings input[role="switch"]:checked { background: radial-gradient(circle at 19px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-call-to-action, #3ea6ff); }
+    .settings input[role="switch"]:disabled { opacity: .5; cursor: default; }
     .settings p { margin: 4px 0; }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
@@ -112,23 +119,37 @@ function mount(panel: HTMLElement): void {
   const form = document.createElement('div');
   form.className = 'settings';
   form.hidden = true;
-  const field = (name: string, type: string, text: string): HTMLInputElement => {
+  const toggle = (name: string, text: string): HTMLInputElement => {
     const label = document.createElement('label');
     const input = document.createElement('input');
-    input.type = type;
+    input.type = 'checkbox';
+    input.setAttribute('role', 'switch');
     input.dataset.setting = name;
-    if (type === 'checkbox') label.append(input, ` ${text}`); else label.append(text, input);
+    label.append(input, text);
     form.append(label);
     return input;
   };
-  const fetchBox = field('fetch', 'checkbox', 'Fetch views, likes and upload dates');
-  const keyInput = field('apiKey', 'password', 'YouTube Data API key');
+  const fetchBox = toggle('fetch', 'Fetch views, likes and upload dates');
+  const keyLabel = document.createElement('label');
+  keyLabel.htmlFor = 'api-key';
+  keyLabel.textContent = 'YouTube Data API key';
+  const keyInput = document.createElement('input');
+  keyInput.type = 'password';
+  keyInput.id = 'api-key';
+  keyInput.dataset.setting = 'apiKey';
   keyInput.autocomplete = 'off';
   keyInput.spellcheck = false;
-  const forgetKey = makeButton('Forget key');
-  forgetKey.dataset.action = 'forget';
-  form.append(forgetKey);
-  const dedupeBox = field('dedupe', 'checkbox', 'Remove repeated videos when sorting');
+  keyInput.placeholder = 'Paste a key';
+  const clearKey = makeButton('Clear');
+  clearKey.dataset.action = 'clear';
+  const saveKey = makeButton('Save');
+  saveKey.dataset.action = 'save-key';
+  const keyRow = document.createElement('div');
+  keyRow.className = 'key';
+  keyRow.append(keyInput, clearKey, saveKey);
+  form.append(keyLabel, keyRow);
+  const dedupeBox = toggle('dedupe', 'Dedupe');
+  dedupeBox.parentElement!.title = 'Remove repeated upcoming videos when sorting.';
   const hint = document.createElement('p');
   form.append(hint);
 
@@ -193,16 +214,17 @@ function mount(panel: HTMLElement): void {
     const available = storageAvailable();
     fetchBox.checked = settings.fetch;
     dedupeBox.checked = settings.dedupe;
-    showKeySaved();
-    for (const input of [fetchBox, keyInput, dedupeBox, forgetKey]) input.disabled = !available;
-    forgetKey.disabled ||= !settings.apiKey;
+    keyInput.value = settings.apiKey;
+    for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
+    updateKeyButtons();
     hint.hidden = available;
     hint.textContent = available ? '' : 'Settings need the userscript manager’s storage permission. Reinstall the script to grant it.';
   }
-  // The saved key is never put back into the field, only replaced or forgotten.
-  function showKeySaved(): void {
-    keyInput.value = '';
-    keyInput.placeholder = settings.apiKey ? 'Saved; type to replace' : 'Paste a key';
+  // The key field holds the saved key, masked; edits apply only through Save.
+  function updateKeyButtons(): void {
+    const typed = keyInput.value.trim();
+    saveKey.disabled = keyInput.disabled || !typed || typed === settings.apiKey;
+    clearKey.disabled = keyInput.disabled || (!settings.apiKey && !keyInput.value);
   }
   gear.addEventListener('click', () => {
     form.hidden = !form.hidden;
@@ -216,13 +238,13 @@ function mount(panel: HTMLElement): void {
     } catch (error) {
       report(error instanceof Error ? error.message : String(error), true);
     }
-    forgetKey.disabled = !apiKey;
+    updateKeyButtons();
     refreshControls();
   };
   for (const input of [fetchBox, dedupeBox]) input.addEventListener('input', () => store(settings.apiKey));
-  keyInput.addEventListener('input', () => { if (keyInput.value.trim()) store(keyInput.value.trim()); });
-  keyInput.addEventListener('change', showKeySaved);
-  forgetKey.addEventListener('click', () => { store(''); showKeySaved(); });
+  keyInput.addEventListener('input', updateKeyButtons);
+  saveKey.addEventListener('click', () => { keyInput.value = keyInput.value.trim(); store(keyInput.value); });
+  clearKey.addEventListener('click', () => { keyInput.value = ''; store(''); });
 
   function describe(): void {
     syncSave();

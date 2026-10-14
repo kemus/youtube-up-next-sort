@@ -7,7 +7,8 @@ const expected = ['past', 'current', 'short', 'tie', 'minute', 'long', 'live', '
 const original = ['past', 'current', 'long', 'short', 'tie', 'live', 'unknown', 'minute'];
 const descending = ['past', 'current', 'long', 'minute', 'short', 'tie', 'live', 'unknown'];
 
-// options: settings (manager storage contents), noStorage, watched ({ id: percent }),
+// options: settings (manager storage contents; dedupe is off unless set or freshStorage),
+// freshStorage (empty storage, for defaults), noStorage, watched ({ id: percent }),
 // api ('quota' for a quota error), removeMode ('noop' for an ignored removal).
 async function fixture(page, mode = 'normal', extra = {}, options = {}) {
   await page.goto('about:blank');
@@ -15,7 +16,7 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
   assert.equal(await page.evaluate(() => typeof window.fixture), 'undefined');
   await page.evaluate((mode, extra, options) => {
     if (!options.noStorage) {
-      const store = window.gmStore = { ...options.settings };
+      const store = window.gmStore = options.freshStorage ? {} : { dedupe: false, ...options.settings };
       window.GM_getValue = (name, fallback) => name in store ? store[name] : fallback;
       window.GM_setValue = (name, value) => { store[name] = value; };
     }
@@ -237,27 +238,49 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-setting=apiKey]'), false);
     await press(page, '[data-action=settings]');
     await press(page, '[data-setting=fetch]');
-    await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]').focus());
-    await page.keyboard.type('key-1');
-    assert.deepEqual(await page.evaluate(() => window.gmStore), { apiKey: 'key-1', fetch: true, dedupe: false });
+    const typeKey = async text => {
+      await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]').focus());
+      await page.keyboard.type(text);
+    };
+    await typeKey('key-1');
+    // Typing alone saves nothing; Save does.
+    assert.deepEqual(await page.evaluate(() => window.gmStore), { apiKey: '', fetch: true, dedupe: false });
     assert.equal(await page.evaluate(() => window.fixture.keys), 0); // Typing must not reach YouTube's hotkeys.
+    assert.equal(await shown(page, '[data-sort=views]'), false);
+    await press(page, '[data-action=save-key]');
+    assert.equal(await page.evaluate(() => window.gmStore.apiKey), 'key-1');
+    assert.equal(await shown(page, '[data-action=save-key]'), false); // Nothing left to save.
     for (const key of ['views', 'likes', 'uploaded']) assert.equal(await shown(page, `[data-sort=${key}]`), true);
     assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
-    // The saved key leaves the field once editing ends and never comes back into it.
+    // The field keeps the saved key masked and editable; Clear and Save share its line.
     const keyField = () => page.evaluate(() => {
-      const input = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]');
-      return [input.value, input.placeholder];
+      const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
+      const input = root.querySelector('[data-setting=apiKey]');
+      const tops = ['[data-setting=apiKey]', '[data-action=clear]', '[data-action=save-key]']
+        .map(selector => Math.round(root.querySelector(selector).getBoundingClientRect().top));
+      return { value: input.value, type: input.type, sameLine: tops[0] === tops[1] && tops[1] === tops[2] };
     });
-    await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]').blur());
-    assert.deepEqual(await keyField(), ['', 'Saved; type to replace']);
+    assert.deepEqual(await keyField(), { value: 'key-1', type: 'password', sameLine: true });
+    await typeKey('-x');
+    assert.equal(await page.evaluate(() => window.gmStore.apiKey), 'key-1');
     await press(page, '[data-action=settings]'); await press(page, '[data-action=settings]');
-    assert.deepEqual(await keyField(), ['', 'Saved; type to replace']);
-    await press(page, '[data-action=forget]');
+    assert.deepEqual(await keyField(), { value: 'key-1', type: 'password', sameLine: true }); // Unsaved edits are dropped.
+    await press(page, '[data-action=clear]');
     assert.equal(await page.evaluate(() => window.gmStore.apiKey), '');
-    assert.deepEqual(await keyField(), ['', 'Paste a key']);
+    assert.equal((await keyField()).value, '');
     assert.equal(await shown(page, '[data-sort=views]'), false);
-    assert.equal(await shown(page, '[data-action=forget]'), false);
+    assert.equal(await shown(page, '[data-action=clear]'), false);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
+      .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent])),
+    [['fetch', 'Fetch views, likes and upload dates'], ['dedupe', 'Dedupe']]);
     assert.equal(await shown(page, '.settings p'), false); // No explanatory text while settings work.
+
+    // Dedupe is on by default.
+    await fixture(page, 'normal', {}, { freshStorage: true });
+    await press(page, '[data-action=settings]');
+    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=dedupe]').checked), true);
+    await click(page); await idle(page);
+    assert.deepEqual((await result(page)).removed, ['tie']);
 
     await fixture(page, 'normal', {}, { noStorage: true });
     await press(page, '[data-action=settings]');
@@ -283,6 +306,20 @@ for (const [browserName, executablePath] of [
     await press(page, '[data-sort=uploaded]'); await idle(page);
     await press(page, '[data-sort=uploaded]'); await idle(page);
     assert.deepEqual((await result(page)).order, ['past', 'current', 'short', 'tie', 'minute', 'long', 'live', 'unknown']);
+    // The details are stored for eight hours, so a reload asks again only after that.
+    const stats = await page.evaluate(() => window.gmStore.stats);
+    assert.deepEqual(Object.keys(stats).sort(), ['live', 'long', 'minute', 'short', 'unknown']);
+    assert.deepEqual(stats.minute.likes, null);
+    const aged = hours => Object.fromEntries(Object.entries(stats).map(([id, entry]) => [id, { ...entry, fetchedAt: Date.now() - hours * 3600000 }]));
+    await fixture(page, 'normal', {}, { settings: { ...enabled.settings, stats: aged(7) } });
+    await press(page, '[data-sort=views]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['past', 'current', 'live', 'short', 'tie', 'minute', 'long', 'unknown']);
+    assert.equal(actual.requests.length, 0);
+    await fixture(page, 'normal', {}, { settings: { ...enabled.settings, stats: aged(9) } });
+    await press(page, '[data-sort=views]'); await idle(page);
+    assert.equal((await result(page)).requests.length, 1);
+    assert.ok(Date.now() - (await page.evaluate(() => window.gmStore.stats.long.fetchedAt)) < 60000);
 
     await fixture(page, 'normal', {}, { ...enabled, api: 'quota' });
     await press(page, '[data-sort=views]'); await idle(page);
@@ -329,7 +366,7 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), false);
     await press(page, '[data-action=watched]'); await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['long']);
-    console.log(`${browserName}: 21 browser fixture scenarios passed`);
+    console.log(`${browserName}: 24 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }

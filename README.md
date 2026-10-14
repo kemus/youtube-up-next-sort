@@ -43,30 +43,33 @@ changes reset the cycle; reloading also clears undo history.
 
 ### Settings
 
-The gear button opens a small panel. Settings are saved as you change them in
-your userscript manager's storage, not in YouTube's site storage. The key field
-empties once you finish typing and never shows the saved key again; type a new
-key to replace it, or use **Forget key**. The panel sits in a closed shadow
+The gear button opens a small panel. Settings are saved in your userscript
+manager's storage, not in YouTube's site storage. Toggles save when flipped.
+The key field shows the saved key masked and stays editable; a key is saved
+only with **Save**, and **Clear** removes it. The panel sits in a closed shadow
 root, and requests send the key in a header rather than the address. That keeps
 the key from casual reads, but the script runs in YouTube's page context, so a
 page script built to intercept it still could. Restrict the key to the YouTube
-Data API. If
-the manager did not grant storage, the panel says so and nothing is saved.
+Data API. If the manager did not grant storage, the panel says so and nothing
+is saved.
 
 - **Fetch views, likes and upload dates**, with a YouTube Data API key. Off by
   default. **Views**, **Likes**, and **Uploaded** appear only when this is on
-  and a key is entered.
-- **Remove repeated videos when sorting**. Off by default.
+  and a key is saved.
+- **Dedupe**: remove repeated videos when sorting. On by default, unless the
+  manager grants no storage.
 
 ### Views, Likes, and Uploaded
 
 YouTube's queue data has no view, like, or publish-date fields, so these sorts
 ask the YouTube Data API (`videos.list`) when clicked, and only then. A click
-requests the loaded upcoming videos not fetched yet, up to 50 per request; each
-request costs 1 unit of the key's daily quota (10,000 by default). Results are
-kept in memory until the page reloads. Videos without a value, such as hidden
-like counts or private videos, go last in both directions. A rejected key or a
-used-up quota shows a message under the row and moves nothing.
+requests the loaded upcoming videos not fetched in the last eight hours, up to
+50 per request; each request costs 1 unit of the key's daily quota (10,000 by
+default). Results are kept per video for eight hours in the manager's storage,
+so reloads and other tabs reuse them, or in memory until reload without it.
+Videos without a value, such as hidden like counts or private videos, go last
+in both directions. A rejected key or a used-up quota shows a message under the
+row and moves nothing.
 
 Requests go from the page straight to `www.googleapis.com` without cookies and
 carry the key (in an `X-Goog-Api-Key` header) and the video IDs. Create the key in Google Cloud console with the
@@ -80,7 +83,7 @@ progress, before or after the current video; the current video stays. Any
 progress above zero counts. YouTube's figure can lag behind what you watched, so
 a video you finished may still show as unwatched or partly watched.
 
-With **Remove repeated videos when sorting** on, each sort first removes
+With **Dedupe** on, each sort first removes
 upcoming copies of a video that is the current video, appears before it, or
 appears earlier among the upcoming ones. Entries at or before the current video
 are never removed as repeats.
@@ -146,7 +149,7 @@ order. Repeat in a disposable editable playlist if you want playlist coverage.
 - `src/sort.ts`: duration parsing, stable tail sorting by each key, and the
   repeated and watched selections.
 - `src/youtube.ts`: native queue snapshots, moves, removals, and verification.
-- `src/stats.ts`: YouTube Data API requests and their in-memory cache.
+- `src/stats.ts`: YouTube Data API requests and their eight-hour cache.
 - `src/settings.ts`: settings in the userscript manager's storage.
 - `src/userscript.ts`: panel control, settings, Save mirroring, and navigation
   lifecycle.
@@ -193,3 +196,10 @@ and showed that typing in the key field did not trigger player hotkeys. Not
 tested: a real userscript manager with the new grants, a real API key, watch
 progress reported by YouTube itself, saved playlists, and Firefox on the live
 site. In one earlier probe a removed row reappeared when playback advanced.
+The user then installed 0.4.0 in Violentmonkey 2.49.0 and saved a key through
+its settings panel.
+
+Version 0.5.0 saves the key only with **Save**, shows settings as toggles,
+turns Dedupe on by default, and keeps fetched details for eight hours. Eight
+unit tests and twenty-four fixture scenarios each in Firefox and Chromium
+passed on 2026-10-13.

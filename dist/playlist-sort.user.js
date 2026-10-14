@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.4.0
+// @version      0.5.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
@@ -17,13 +17,19 @@
   function storageAvailable() {
     return typeof GM_getValue === "function" && typeof GM_setValue === "function";
   }
+  function readStored(name, fallback) {
+    return storageAvailable() ? GM_getValue(name, fallback) : fallback;
+  }
+  function writeStored(name, value) {
+    if (storageAvailable()) GM_setValue(name, value);
+  }
   function loadSettings() {
     if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false };
     const apiKey = GM_getValue("apiKey", "");
     return {
       apiKey: typeof apiKey === "string" ? apiKey : "",
       fetch: GM_getValue("fetch", false) === true,
-      dedupe: GM_getValue("dedupe", false) === true
+      dedupe: GM_getValue("dedupe", true) === true
     };
   }
   function saveSettings(settings2) {
@@ -82,10 +88,31 @@
   // src/stats.ts
   var ENDPOINT = "https://www.googleapis.com/youtube/v3/videos";
   var BATCH = 50;
+  var CACHE_KEY = "stats";
+  var CACHE_MS = 8 * 60 * 60 * 1e3;
   var cache = /* @__PURE__ */ new Map();
   function count(value) {
     const number = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
     return Number.isSafeInteger(number) ? number : null;
+  }
+  var known = (value) => value === null || typeof value === "number";
+  function refreshCache(now) {
+    const stored = readStored(CACHE_KEY, {});
+    if (stored !== null && typeof stored === "object") {
+      for (const [id, entry] of Object.entries(stored)) {
+        if (typeof entry?.fetchedAt === "number" && known(entry.views) && known(entry.likes) && known(entry.uploadedAt) && entry.fetchedAt > (cache.get(id)?.fetchedAt ?? -Infinity)) {
+          cache.set(id, { views: entry.views, likes: entry.likes, uploadedAt: entry.uploadedAt, fetchedAt: entry.fetchedAt });
+        }
+      }
+    }
+    let expired = false;
+    for (const [id, entry] of cache) {
+      if (now - entry.fetchedAt >= CACHE_MS || entry.fetchedAt > now) {
+        cache.delete(id);
+        expired = true;
+      }
+    }
+    return expired;
   }
   function failure(status, body) {
     const error = body?.error;
@@ -98,7 +125,19 @@
     return `YouTube Data API request failed (${status})${message ? `: ${message}` : "."}`;
   }
   async function fetchStats(videoIds, apiKey, signal) {
+    const changed = refreshCache(Date.now());
     const missing = [...new Set(videoIds)].filter((id) => id && !cache.has(id));
+    try {
+      await fetchMissing(missing, apiKey, signal);
+    } finally {
+      if (changed || missing.some((id) => cache.has(id))) writeStored(CACHE_KEY, Object.fromEntries(cache));
+    }
+    return new Map(videoIds.flatMap((id) => {
+      const entry = cache.get(id);
+      return entry ? [[id, { views: entry.views, likes: entry.likes, uploadedAt: entry.uploadedAt }]] : [];
+    }));
+  }
+  async function fetchMissing(missing, apiKey, signal) {
     for (let start = 0; start < missing.length; start += BATCH) {
       const batch = missing.slice(start, start + BATCH);
       const query = new URLSearchParams({
@@ -117,18 +156,19 @@
       if (!response.ok) throw new Error(failure(response.status, body));
       const items = body?.items;
       if (!Array.isArray(items)) throw new Error("The YouTube Data API returned an unexpected response.");
+      const fetchedAt = Date.now();
       for (const item of items) {
         if (typeof item.id !== "string") continue;
         const published = typeof item.snippet?.publishedAt === "string" ? Date.parse(item.snippet.publishedAt) : NaN;
         cache.set(item.id, {
           views: count(item.statistics?.viewCount),
           likes: count(item.statistics?.likeCount),
-          uploadedAt: Number.isFinite(published) ? published : null
+          uploadedAt: Number.isFinite(published) ? published : null,
+          fetchedAt
         });
       }
-      for (const id of batch) if (!cache.has(id)) cache.set(id, { views: null, likes: null, uploadedAt: null });
+      for (const id of batch) if (!cache.has(id)) cache.set(id, { views: null, likes: null, uploadedAt: null, fetchedAt });
     }
-    return new Map(videoIds.flatMap((id) => cache.has(id) ? [[id, cache.get(id)]] : []));
   }
 
   // src/youtube.ts
@@ -430,8 +470,15 @@
     button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
     .save svg { width: 14px; height: 14px; fill: currentColor; }
-    .settings label { display: block; margin: 3px 0; }
-    .settings input[type="password"] { display: block; box-sizing: border-box; width: 100%; max-width: 320px; margin-top: 2px; padding: 3px 6px; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; background: transparent; color: var(--yt-spec-text-primary, #eee); font: inherit; }
+    .settings label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .settings .key { display: flex; align-items: center; gap: 4px; max-width: 420px; margin-bottom: 4px; }
+    .settings .key button { margin: 0; }
+    .settings input[type="password"] { flex: 1; min-width: 0; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; background: transparent; color: var(--yt-spec-text-primary, #eee); font: inherit; }
+    /* The knob is a gradient: Firefox draws no ::before on inputs. */
+    .settings input[role="switch"] { appearance: none; flex: none; width: 26px; height: 14px; margin: 0; border-radius: 7px; cursor: pointer;
+      background: radial-gradient(circle at 7px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-10-percent-layer, #555); }
+    .settings input[role="switch"]:checked { background: radial-gradient(circle at 19px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-call-to-action, #3ea6ff); }
+    .settings input[role="switch"]:disabled { opacity: .5; cursor: default; }
     .settings p { margin: 4px 0; }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
@@ -460,24 +507,37 @@
     const form = document.createElement("div");
     form.className = "settings";
     form.hidden = true;
-    const field = (name, type, text) => {
+    const toggle = (name, text) => {
       const label = document.createElement("label");
       const input = document.createElement("input");
-      input.type = type;
+      input.type = "checkbox";
+      input.setAttribute("role", "switch");
       input.dataset.setting = name;
-      if (type === "checkbox") label.append(input, ` ${text}`);
-      else label.append(text, input);
+      label.append(input, text);
       form.append(label);
       return input;
     };
-    const fetchBox = field("fetch", "checkbox", "Fetch views, likes and upload dates");
-    const keyInput = field("apiKey", "password", "YouTube Data API key");
+    const fetchBox = toggle("fetch", "Fetch views, likes and upload dates");
+    const keyLabel = document.createElement("label");
+    keyLabel.htmlFor = "api-key";
+    keyLabel.textContent = "YouTube Data API key";
+    const keyInput = document.createElement("input");
+    keyInput.type = "password";
+    keyInput.id = "api-key";
+    keyInput.dataset.setting = "apiKey";
     keyInput.autocomplete = "off";
     keyInput.spellcheck = false;
-    const forgetKey = makeButton("Forget key");
-    forgetKey.dataset.action = "forget";
-    form.append(forgetKey);
-    const dedupeBox = field("dedupe", "checkbox", "Remove repeated videos when sorting");
+    keyInput.placeholder = "Paste a key";
+    const clearKey = makeButton("Clear");
+    clearKey.dataset.action = "clear";
+    const saveKey = makeButton("Save");
+    saveKey.dataset.action = "save-key";
+    const keyRow = document.createElement("div");
+    keyRow.className = "key";
+    keyRow.append(keyInput, clearKey, saveKey);
+    form.append(keyLabel, keyRow);
+    const dedupeBox = toggle("dedupe", "Dedupe");
+    dedupeBox.parentElement.title = "Remove repeated upcoming videos when sorting.";
     const hint = document.createElement("p");
     form.append(hint);
     const confirmBar = document.createElement("div");
@@ -536,15 +596,16 @@
       const available = storageAvailable();
       fetchBox.checked = settings.fetch;
       dedupeBox.checked = settings.dedupe;
-      showKeySaved();
-      for (const input of [fetchBox, keyInput, dedupeBox, forgetKey]) input.disabled = !available;
-      forgetKey.disabled ||= !settings.apiKey;
+      keyInput.value = settings.apiKey;
+      for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
+      updateKeyButtons();
       hint.hidden = available;
       hint.textContent = available ? "" : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
     }
-    function showKeySaved() {
-      keyInput.value = "";
-      keyInput.placeholder = settings.apiKey ? "Saved; type to replace" : "Paste a key";
+    function updateKeyButtons() {
+      const typed = keyInput.value.trim();
+      saveKey.disabled = keyInput.disabled || !typed || typed === settings.apiKey;
+      clearKey.disabled = keyInput.disabled || !settings.apiKey && !keyInput.value;
     }
     gear.addEventListener("click", () => {
       form.hidden = !form.hidden;
@@ -558,17 +619,18 @@
       } catch (error) {
         report(error instanceof Error ? error.message : String(error), true);
       }
-      forgetKey.disabled = !apiKey;
+      updateKeyButtons();
       refreshControls();
     };
     for (const input of [fetchBox, dedupeBox]) input.addEventListener("input", () => store(settings.apiKey));
-    keyInput.addEventListener("input", () => {
-      if (keyInput.value.trim()) store(keyInput.value.trim());
+    keyInput.addEventListener("input", updateKeyButtons);
+    saveKey.addEventListener("click", () => {
+      keyInput.value = keyInput.value.trim();
+      store(keyInput.value);
     });
-    keyInput.addEventListener("change", showKeySaved);
-    forgetKey.addEventListener("click", () => {
+    clearKey.addEventListener("click", () => {
+      keyInput.value = "";
       store("");
-      showKeySaved();
     });
     function describe() {
       syncSave();
