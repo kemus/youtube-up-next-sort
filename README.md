@@ -44,7 +44,10 @@ changes reset the cycle; reloading also clears undo history.
 ### Settings
 
 The gear button opens a small panel. Settings are saved as you change them in
-your userscript manager's storage, which YouTube's own scripts cannot read. If
+your userscript manager's storage, not in YouTube's site storage. That does not
+hide the API key from the page: the script runs in YouTube's page context, so
+scripts on the page could read the key from the settings field or from the
+request that carries it. Restrict the key to the YouTube Data API. If
 the manager did not grant storage, the panel says so and nothing is saved.
 
 - **Fetch views, likes and upload dates**, with a YouTube Data API key. Off by

@@ -536,7 +536,7 @@
       keyInput.value = settings.apiKey;
       dedupeBox.checked = settings.dedupe;
       for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
-      hint.textContent = available ? "Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key; YouTube cannot read it." : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
+      hint.textContent = available ? "Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key, but scripts on this page could read it while it is in use." : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
     }
     gear.addEventListener("click", () => {
       form.hidden = !form.hidden;

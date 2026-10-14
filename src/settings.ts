@@ -12,7 +12,7 @@ export function storageAvailable(): boolean {
   return typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
 }
 
-/** Settings live in the manager's storage, which YouTube's own scripts cannot read. */
+/** Settings live in the manager's storage, not the page's; the page can still see the key in use. */
 export function loadSettings(): Settings {
   if (!storageAvailable()) return { apiKey: '', fetch: false, dedupe: false };
   const apiKey = GM_getValue!<unknown>('apiKey', '');
