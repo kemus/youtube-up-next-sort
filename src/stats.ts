@@ -34,11 +34,11 @@ export async function fetchStats(videoIds: readonly string[], apiKey: string, si
       part: 'snippet,statistics',
       fields: 'items(id,snippet/publishedAt,statistics(viewCount,likeCount))',
       id: batch.join(','),
-      key: apiKey,
     });
     let response: Response;
     try {
-      response = await fetch(`${ENDPOINT}?${query}`, { signal, credentials: 'omit' });
+      // A header keeps the key out of the request address, which the page can list.
+      response = await fetch(`${ENDPOINT}?${query}`, { signal, credentials: 'omit', headers: { 'X-Goog-Api-Key': apiKey } });
     } catch (error) {
       signal.throwIfAborted();
       throw new Error(`Could not reach the YouTube Data API: ${error instanceof Error ? error.message : String(error)}`);

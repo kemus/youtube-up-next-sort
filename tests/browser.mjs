@@ -19,14 +19,21 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       window.GM_getValue = (name, fallback) => name in store ? store[name] : fallback;
       window.GM_setValue = (name, value) => { store[name] = value; };
     }
+    // The control asks for a closed shadow root; record that, then open it so tests can reach inside.
+    const attachShadow = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) {
+      window.shadowModes = [...window.shadowModes ?? [], init.mode];
+      return attachShadow.call(this, { ...init, mode: 'open' });
+    };
     const table = {
       long: { views: '500', likes: '5', date: '2020-01-01T00:00:00Z' },
       short: { views: '20', likes: '9', date: '2024-01-01T00:00:00Z' },
       minute: { views: '100', date: '2022-01-01T00:00:00Z' }, // Likes hidden.
       live: { views: '7', likes: '1', date: '2019-01-01T00:00:00Z' },
     }; // 'unknown' is omitted, as the API omits private videos.
-    window.fetch = async url => {
+    window.fetch = async (url, init) => {
       window.fixture.requests.push(String(url));
+      window.fixture.apiKeys.push(init?.headers?.['X-Goog-Api-Key']);
       if (options.api === 'quota') {
         return new Response(JSON.stringify({ error: { code: 403, message: 'Quota exceeded.', errors: [{ reason: 'quotaExceeded' }] } }), { status: 403 });
       }
@@ -76,7 +83,7 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       ] } },
     } }));
     const data = { contents: entries, playlistId, currentIndex: 1, totalVideos: entries.length, ...extra };
-    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], requests: [], playerNext: 'long', data };
+    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], requests: [], apiKeys: [], playerNext: 'long', data };
     document.addEventListener('keydown', () => state.keys++);
     // Stands in for YouTube's command handler running a row's own menu action.
     app.resolveCommand = endpoint => {
@@ -235,6 +242,21 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(await page.evaluate(() => window.gmStore), { apiKey: 'key-1', fetch: true, dedupe: false });
     assert.equal(await page.evaluate(() => window.fixture.keys), 0); // Typing must not reach YouTube's hotkeys.
     for (const key of ['views', 'likes', 'uploaded']) assert.equal(await shown(page, `[data-sort=${key}]`), true);
+    assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
+    // The saved key leaves the field once editing ends and never comes back into it.
+    const keyField = () => page.evaluate(() => {
+      const input = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]');
+      return [input.value, input.placeholder];
+    });
+    await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]').blur());
+    assert.deepEqual(await keyField(), ['', 'Saved; type to replace']);
+    await press(page, '[data-action=settings]'); await press(page, '[data-action=settings]');
+    assert.deepEqual(await keyField(), ['', 'Saved; type to replace']);
+    await press(page, '[data-action=forget]');
+    assert.equal(await page.evaluate(() => window.gmStore.apiKey), '');
+    assert.deepEqual(await keyField(), ['', 'Paste a key']);
+    assert.equal(await shown(page, '[data-sort=views]'), false);
+    assert.equal(await shown(page, '[data-action=forget]'), false);
 
     await fixture(page, 'normal', {}, { noStorage: true });
     await press(page, '[data-action=settings]');
@@ -250,7 +272,8 @@ for (const [browserName, executablePath] of [
     const request = new URL(actual.requests[0]);
     assert.equal(request.origin + request.pathname, 'https://www.googleapis.com/youtube/v3/videos');
     assert.equal(request.searchParams.get('id'), 'long,short,live,unknown,minute'); // Upcoming only, each video once.
-    assert.equal(request.searchParams.get('key'), 'key-1');
+    assert.equal(request.searchParams.get('key'), null); // Sent as a header, not in the address.
+    assert.deepEqual(await page.evaluate(() => window.fixture.apiKeys), ['key-1']);
     await press(page, '[data-sort=likes]'); await idle(page);
     actual = await result(page);
     assert.deepEqual(actual.order, ['past', 'current', 'live', 'long', 'short', 'tie', 'minute', 'unknown']);

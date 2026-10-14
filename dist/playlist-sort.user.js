@@ -104,12 +104,11 @@
       const query = new URLSearchParams({
         part: "snippet,statistics",
         fields: "items(id,snippet/publishedAt,statistics(viewCount,likeCount))",
-        id: batch.join(","),
-        key: apiKey
+        id: batch.join(",")
       });
       let response;
       try {
-        response = await fetch(`${ENDPOINT}?${query}`, { signal, credentials: "omit" });
+        response = await fetch(`${ENDPOINT}?${query}`, { signal, credentials: "omit", headers: { "X-Goog-Api-Key": apiKey } });
       } catch (error) {
         signal.throwIfAborted();
         throw new Error(`Could not reach the YouTube Data API: ${error instanceof Error ? error.message : String(error)}`);
@@ -419,7 +418,7 @@
   function mount(panel) {
     if (panel.querySelector(HOST_TAG)) return;
     const host = document.createElement(HOST_TAG);
-    const root = host.attachShadow({ mode: "open" });
+    const root = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = `
     :host { display: block; padding: 4px 8px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
@@ -475,6 +474,9 @@
     const keyInput = field("apiKey", "password", "YouTube Data API key");
     keyInput.autocomplete = "off";
     keyInput.spellcheck = false;
+    const forgetKey = makeButton("Forget key");
+    forgetKey.dataset.action = "forget";
+    form.append(forgetKey);
     const dedupeBox = field("dedupe", "checkbox", "Remove repeated videos when sorting");
     const hint = document.createElement("p");
     form.append(hint);
@@ -533,24 +535,39 @@
       settings = loadSettings();
       const available = storageAvailable();
       fetchBox.checked = settings.fetch;
-      keyInput.value = settings.apiKey;
       dedupeBox.checked = settings.dedupe;
-      for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
-      hint.textContent = available ? "Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key, but scripts on this page could read it while it is in use." : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
+      showKeySaved();
+      for (const input of [fetchBox, keyInput, dedupeBox, forgetKey]) input.disabled = !available;
+      forgetKey.disabled ||= !settings.apiKey;
+      hint.textContent = available ? "Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key; scripts on this page could still intercept it while it is in use." : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
+    }
+    function showKeySaved() {
+      keyInput.value = "";
+      keyInput.placeholder = settings.apiKey ? "Saved; type to replace" : "Paste a key";
     }
     gear.addEventListener("click", () => {
       form.hidden = !form.hidden;
       gear.setAttribute("aria-expanded", String(!form.hidden));
       if (!form.hidden) fillSettings();
     });
-    for (const input of [fetchBox, keyInput, dedupeBox]) input.addEventListener("input", () => {
-      settings = { apiKey: keyInput.value.trim(), fetch: fetchBox.checked, dedupe: dedupeBox.checked };
+    const store = (apiKey) => {
+      settings = { apiKey, fetch: fetchBox.checked, dedupe: dedupeBox.checked };
       try {
         saveSettings(settings);
       } catch (error) {
         report(error instanceof Error ? error.message : String(error), true);
       }
+      forgetKey.disabled = !apiKey;
       refreshControls();
+    };
+    for (const input of [fetchBox, dedupeBox]) input.addEventListener("input", () => store(settings.apiKey));
+    keyInput.addEventListener("input", () => {
+      if (keyInput.value.trim()) store(keyInput.value.trim());
+    });
+    keyInput.addEventListener("change", showKeySaved);
+    forgetKey.addEventListener("click", () => {
+      store("");
+      showKeySaved();
     });
     function describe() {
       syncSave();

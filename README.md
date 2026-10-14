@@ -44,10 +44,13 @@ changes reset the cycle; reloading also clears undo history.
 ### Settings
 
 The gear button opens a small panel. Settings are saved as you change them in
-your userscript manager's storage, not in YouTube's site storage. That does not
-hide the API key from the page: the script runs in YouTube's page context, so
-scripts on the page could read the key from the settings field or from the
-request that carries it. Restrict the key to the YouTube Data API. If
+your userscript manager's storage, not in YouTube's site storage. The key field
+empties once you finish typing and never shows the saved key again; type a new
+key to replace it, or use **Forget key**. The panel sits in a closed shadow
+root, and requests send the key in a header rather than the address. That keeps
+the key from casual reads, but the script runs in YouTube's page context, so a
+page script built to intercept it still could. Restrict the key to the YouTube
+Data API. If
 the manager did not grant storage, the panel says so and nothing is saved.
 
 - **Fetch views, likes and upload dates**, with a YouTube Data API key. Off by
@@ -66,7 +69,7 @@ like counts or private videos, go last in both directions. A rejected key or a
 used-up quota shows a message under the row and moves nothing.
 
 Requests go from the page straight to `www.googleapis.com` without cookies and
-carry the key and the video IDs. Create the key in Google Cloud console with the
+carry the key (in an `X-Goog-Api-Key` header) and the video IDs. Create the key in Google Cloud console with the
 YouTube Data API v3 enabled, and restrict it to that API. The API's publish time
 can differ from the upload time.
 

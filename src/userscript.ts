@@ -66,7 +66,8 @@ function nativeSave(panel: HTMLElement): { row: HTMLElement; button: HTMLButtonE
 function mount(panel: HTMLElement): void {
   if (panel.querySelector(HOST_TAG)) return;
   const host = document.createElement(HOST_TAG);
-  const root = host.attachShadow({ mode: 'open' });
+  // Closed, so page scripts can't walk into the settings field.
+  const root = host.attachShadow({ mode: 'closed' });
   // YouTube enforces Trusted Types in page context. Build DOM nodes rather than
   // assigning HTML strings, which would throw before the control is attached.
   const style = document.createElement('style');
@@ -124,6 +125,9 @@ function mount(panel: HTMLElement): void {
   const keyInput = field('apiKey', 'password', 'YouTube Data API key');
   keyInput.autocomplete = 'off';
   keyInput.spellcheck = false;
+  const forgetKey = makeButton('Forget key');
+  forgetKey.dataset.action = 'forget';
+  form.append(forgetKey);
   const dedupeBox = field('dedupe', 'checkbox', 'Remove repeated videos when sorting');
   const hint = document.createElement('p');
   form.append(hint);
@@ -188,27 +192,38 @@ function mount(panel: HTMLElement): void {
     settings = loadSettings();
     const available = storageAvailable();
     fetchBox.checked = settings.fetch;
-    keyInput.value = settings.apiKey;
     dedupeBox.checked = settings.dedupe;
-    for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
+    showKeySaved();
+    for (const input of [fetchBox, keyInput, dedupeBox, forgetKey]) input.disabled = !available;
+    forgetKey.disabled ||= !settings.apiKey;
     hint.textContent = available
-      ? 'Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key, but scripts on this page could read it while it is in use.'
+      ? 'Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key; scripts on this page could still intercept it while it is in use.'
       : 'Settings need the userscript manager’s storage permission. Reinstall the script to grant it.';
+  }
+  // The saved key is never put back into the field, only replaced or forgotten.
+  function showKeySaved(): void {
+    keyInput.value = '';
+    keyInput.placeholder = settings.apiKey ? 'Saved; type to replace' : 'Paste a key';
   }
   gear.addEventListener('click', () => {
     form.hidden = !form.hidden;
     gear.setAttribute('aria-expanded', String(!form.hidden));
     if (!form.hidden) fillSettings();
   });
-  for (const input of [fetchBox, keyInput, dedupeBox]) input.addEventListener('input', () => {
-    settings = { apiKey: keyInput.value.trim(), fetch: fetchBox.checked, dedupe: dedupeBox.checked };
+  const store = (apiKey: string): void => {
+    settings = { apiKey, fetch: fetchBox.checked, dedupe: dedupeBox.checked };
     try {
       saveSettings(settings);
     } catch (error) {
       report(error instanceof Error ? error.message : String(error), true);
     }
+    forgetKey.disabled = !apiKey;
     refreshControls();
-  });
+  };
+  for (const input of [fetchBox, dedupeBox]) input.addEventListener('input', () => store(settings.apiKey));
+  keyInput.addEventListener('input', () => { if (keyInput.value.trim()) store(keyInput.value.trim()); });
+  keyInput.addEventListener('change', showKeySaved);
+  forgetKey.addEventListener('click', () => { store(''); showKeySaved(); });
 
   function describe(): void {
     syncSave();
