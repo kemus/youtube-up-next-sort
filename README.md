@@ -197,7 +197,8 @@ tested: a real userscript manager with the new grants, a real API key, watch
 progress reported by YouTube itself, saved playlists, and Firefox on the live
 site. In one earlier probe a removed row reappeared when playback advanced.
 The user then installed 0.4.0 in Violentmonkey 2.49.0 and saved a key through
-its settings panel.
+its settings panel, and confirmed in their signed-in queue that the sort row's
+Save button opens YouTube's "Save to..." dialog.
 
 Version 0.5.0 saves the key only with **Save**, shows settings as toggles,
 turns Dedupe on by default, and keeps fetched details for eight hours. Eight
