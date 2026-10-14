@@ -114,7 +114,7 @@ reports that it cannot read the queue, check your manager's injection setting.
 - **Moving items in an editable saved playlist can also save the new order**, just
   as manual dragging does. This is not a temporary-playlist replacement.
 - The script verifies the native queue data and rendered order after each move
-  or removal. This is not server acknowledgement: YouTube handles its own
+  or removal, waiting for them only when a move does not show at once. This is not server acknowledgement: YouTube handles its own
   network requests and may reject or revert an update later.
 - Stopping leaves completed moves and removals applied. Playback changes,
   additions/removals, or unexpected reorders stop further changes. After an
@@ -217,3 +217,14 @@ temporary queue of nine videos, with the current video second, ran a Duration
 cycle with each build: shortest first took 1.2 s and 3 moves (0.5.0: 8.2 s,
 5 moves), longest first 0.9 s and 6 moves (6.6 s, 6), and undo 0.5 s (4.4 s).
 Each order still held in YouTube's queue data and rows four seconds later.
+
+Version 0.7.0 drops the waits between moves. YouTube's queue data and rows show
+each move by the time its drag handler returns, so the script checks at once
+and only waits for the next frame before the next move; it polls every 25 ms
+only if a move shows up late. Ten unit tests and twenty-five fixture scenarios
+each in Firefox and Chromium passed on 2026-10-14. In the same signed-out
+headless Chromium probe on a temporary queue of sixteen upcoming videos, all
+32 measured moves showed before the handler returned, and a Duration cycle ran
+shortest first in 1.0 s and 11 moves (0.6.0: 2.4 s), longest first in 1.1 s
+and 14 moves (2.7 s), and undo in 0.5 s (1.1 s). A second 0.7.0 run took
+0.9 s, 1.3 s and 0.6 s, and each order held four seconds later.

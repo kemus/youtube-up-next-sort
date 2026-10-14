@@ -126,6 +126,11 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
 
 const ids = (snapshot: Snapshot): string[] => snapshot.items.map(item => item.id);
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+// Hidden tabs skip animation frames, so a timer stands in for one there.
+const nextFrame = (): Promise<void> => new Promise(resolve => {
+  requestAnimationFrame(() => resolve());
+  setTimeout(resolve, 50);
+});
 
 function checkSession(snapshot: Snapshot, initial: Snapshot): void {
   if (snapshot.playlistId !== initial.playlistId || snapshot.currentIndex !== initial.currentIndex ||
@@ -176,8 +181,10 @@ export async function reorderPanel(
     const deadline = Date.now() + 3500;
     let confirmed = false;
     try {
-      while (Date.now() < deadline) {
-        await delay(25);
+      // YouTube applies the move before handleDrop returns, so check at once;
+      // poll only if a build ever applies it later.
+      for (let first = true; Date.now() < deadline; first = false) {
+        if (!first) await delay(25);
         signal.throwIfAborted();
         // Rendering may briefly lag behind the native data update.
         let after: Snapshot;
@@ -199,8 +206,8 @@ export async function reorderPanel(
     expected = nextOrder;
     moves++;
     report(`Sorting: ${moves}/${plan.length} moves…`);
-    // Give native refreshes time to arrive; never flood the drag handler.
-    await delay(50);
+    // Let the page repaint between moves; never flood the drag handler.
+    await nextFrame();
   }
   signal.throwIfAborted();
   const final = readSnapshot(panel);

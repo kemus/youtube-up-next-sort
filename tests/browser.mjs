@@ -114,6 +114,16 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
         if (mode === 'noop') return;
         const token = currDragItem.data.playlistSetVideoId;
         const destination = [...currDragItem.parentNode.childNodes].indexOf(currDragItem);
+        // A build that applies the move after handleDrop returns.
+        if (mode === 'delayed') {
+          setTimeout(() => {
+            const original = data.contents.findIndex(entry => entry.playlistPanelVideoRenderer.playlistSetVideoId === token);
+            data.contents.splice(destination, 0, data.contents.splice(original, 1)[0]);
+            state.moves++;
+            render();
+          }, 60);
+          return;
+        }
         const original = data.contents.findIndex(entry => entry.playlistPanelVideoRenderer.playlistSetVideoId === token);
         const moved = data.contents.splice(original, 1)[0];
         data.contents.splice(destination, 0, moved);
@@ -125,6 +135,10 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
           data.contents[data.currentIndex].playlistPanelVideoRenderer.selected = true;
         }
         render();
+        // Press Stop right after the first move, once the click that started the sort returns.
+        if (mode === 'stop' && state.moves === 1) {
+          queueMicrotask(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('button[data-sort]').click());
+        }
       } },
     };
     render();
@@ -187,6 +201,13 @@ for (const [browserName, executablePath] of [
       assert.deepEqual(actual.visible, actual.order);
       assert.doesNotMatch(actual.status, /^Sorted/);
     }
+    await fixture(page, 'delayed'); await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, expected);
+    assert.deepEqual(actual.visible, expected);
+    assert.equal(actual.moves, 2);
+    assert.match(actual.status, /^Sorted loaded/);
+
     for (const mode of ['concurrent', 'advance']) {
       await fixture(page, mode); await click(page); await settled(page);
       actual = await result(page);
@@ -200,9 +221,11 @@ for (const [browserName, executablePath] of [
     assert.equal((await result(page)).moves, 0);
     assert.match((await result(page)).status, /shuffle/);
 
-    await fixture(page); await click(page); await click(page); await settled(page);
-    assert.match((await result(page)).status, /^Stopped/);
-    assert.equal((await result(page)).moves, 1);
+    await fixture(page, 'stop'); await click(page); await settled(page);
+    actual = await result(page);
+    assert.match(actual.status, /^Stopped/);
+    assert.equal(actual.moves, 1);
+    assert.deepEqual(actual.visible, actual.order);
 
     await fixture(page, 'noop'); await click(page); await click(page); await settled(page);
     actual = await result(page);
@@ -368,7 +391,7 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), false);
     await press(page, '[data-action=watched]'); await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['long']);
-    console.log(`${browserName}: 24 browser fixture scenarios passed`);
+    console.log(`${browserName}: 25 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }

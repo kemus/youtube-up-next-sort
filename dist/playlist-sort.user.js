@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.6.0
+// @version      0.7.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
@@ -280,6 +280,10 @@
   }
   var ids = (snapshot) => snapshot.items.map((item) => item.id);
   var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  var nextFrame = () => new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+    setTimeout(resolve, 50);
+  });
   function checkSession(snapshot, initial) {
     if (snapshot.playlistId !== initial.playlistId || snapshot.currentIndex !== initial.currentIndex || snapshot.items[snapshot.currentIndex]?.id !== initial.items[initial.currentIndex]?.id) {
       throw new Error("Playback or the queue changed. Sorting stopped; completed moves remain applied.");
@@ -316,8 +320,8 @@
       const deadline = Date.now() + 3500;
       let confirmed = false;
       try {
-        while (Date.now() < deadline) {
-          await delay(25);
+        for (let first = true; Date.now() < deadline; first = false) {
+          if (!first) await delay(25);
           signal.throwIfAborted();
           let after;
           try {
@@ -345,7 +349,7 @@
       expected = nextOrder;
       moves++;
       report(`Sorting: ${moves}/${plan.length} moves\u2026`);
-      await delay(50);
+      await nextFrame();
     }
     signal.throwIfAborted();
     const final = readSnapshot(panel);
