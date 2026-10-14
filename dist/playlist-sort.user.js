@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.5.0
+// @version      0.6.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
@@ -80,6 +80,27 @@
   }
   function watchedIds(items, currentIndex) {
     return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
+  }
+  function planMoves(current, target, fixed) {
+    const rank = new Map(target.map((id, index) => [id, index]));
+    const upcoming = current.slice(fixed);
+    const tails = [];
+    const previous = [];
+    upcoming.forEach((id, index) => {
+      const value = rank.get(id);
+      let low = 0;
+      let high = tails.length;
+      while (low < high) {
+        const middle = low + high >> 1;
+        if (rank.get(upcoming[tails[middle]]) < value) low = middle + 1;
+        else high = middle;
+      }
+      previous[index] = low > 0 ? tails[low - 1] : -1;
+      tails[low] = index;
+    });
+    const kept = /* @__PURE__ */ new Set();
+    for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]) kept.add(upcoming[index]);
+    return target.slice(fixed).flatMap((id, offset) => kept.has(id) ? [] : [{ id, after: target[fixed + offset - 1] }]);
   }
   function sameOrder(left, right) {
     return left.length === right.length && left.every((id, index) => id === right[index]);
@@ -270,22 +291,22 @@
       throw new Error("The requested order no longer matches this queue.");
     }
     let expected = ids(initial);
+    const plan = planMoves(expected, target, initial.currentIndex + 1);
     let moves = 0;
-    for (let position = initial.currentIndex + 1; position < target.length; position++) {
+    for (const { id, after: anchor } of plan) {
       signal.throwIfAborted();
       const before = readSnapshot(panel);
       checkSession(before, initial);
       if (!sameOrder(ids(before), expected)) {
         throw new Error("The queue changed while sorting. Completed moves remain applied; try again.");
       }
-      if (expected[position] === target[position]) continue;
-      const from = expected.indexOf(target[position]);
-      const row = before.rows[from];
+      const row = before.rows[expected.indexOf(id)];
+      const anchorRow = before.rows[expected.indexOf(anchor)];
       const oldNext = row.nextSibling;
-      const nextOrder = [...expected];
-      nextOrder.splice(position, 0, nextOrder.splice(from, 1)[0]);
+      const nextOrder = expected.filter((other) => other !== id);
+      nextOrder.splice(nextOrder.indexOf(anchor) + 1, 0, id);
       const reorder = before.controller.ytReorderableController;
-      before.container.insertBefore(row, before.rows[position]);
+      before.container.insertBefore(row, anchorRow.nextSibling);
       try {
         reorder.handleDrop({ currDragItem: row });
       } catch (error) {
@@ -296,7 +317,7 @@
       let confirmed = false;
       try {
         while (Date.now() < deadline) {
-          await delay(100);
+          await delay(25);
           signal.throwIfAborted();
           let after;
           try {
@@ -323,8 +344,8 @@
       }
       expected = nextOrder;
       moves++;
-      report(`Sorting: ${position - initial.currentIndex}/${target.length - initial.currentIndex - 1} upcoming positions checked\u2026`);
-      await delay(350);
+      report(`Sorting: ${moves}/${plan.length} moves\u2026`);
+      await delay(50);
     }
     signal.throwIfAborted();
     const final = readSnapshot(panel);

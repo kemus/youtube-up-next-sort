@@ -1,4 +1,4 @@
-import { parseDuration, sameOrder, type Item, type Occurrence } from './sort.ts';
+import { parseDuration, planMoves, sameOrder, type Item, type Occurrence } from './sort.ts';
 
 type RecordValue = Record<string, unknown>;
 type NativeElement = HTMLElement & {
@@ -148,22 +148,22 @@ export async function reorderPanel(
     throw new Error('The requested order no longer matches this queue.');
   }
   let expected = ids(initial);
+  const plan = planMoves(expected, target, initial.currentIndex + 1);
   let moves = 0;
-  for (let position = initial.currentIndex + 1; position < target.length; position++) {
+  for (const { id, after: anchor } of plan) {
     signal.throwIfAborted();
     const before = readSnapshot(panel);
     checkSession(before, initial);
     if (!sameOrder(ids(before), expected)) {
       throw new Error('The queue changed while sorting. Completed moves remain applied; try again.');
     }
-    if (expected[position] === target[position]) continue;
-    const from = expected.indexOf(target[position]!);
-    const row = before.rows[from]!;
+    const row = before.rows[expected.indexOf(id)]!;
+    const anchorRow = before.rows[expected.indexOf(anchor)]!;
     const oldNext = row.nextSibling;
-    const nextOrder = [...expected];
-    nextOrder.splice(position, 0, nextOrder.splice(from, 1)[0]!);
+    const nextOrder = expected.filter(other => other !== id);
+    nextOrder.splice(nextOrder.indexOf(anchor) + 1, 0, id);
     const reorder = before.controller.ytReorderableController!;
-    before.container.insertBefore(row, before.rows[position]!);
+    before.container.insertBefore(row, anchorRow.nextSibling);
     try {
       // This is the callback installed by YouTube's own drag controller.
       // Its input is the moved row at its destination, exactly as after a drop.
@@ -177,7 +177,7 @@ export async function reorderPanel(
     let confirmed = false;
     try {
       while (Date.now() < deadline) {
-        await delay(100);
+        await delay(25);
         signal.throwIfAborted();
         // Rendering may briefly lag behind the native data update.
         let after: Snapshot;
@@ -198,9 +198,9 @@ export async function reorderPanel(
     }
     expected = nextOrder;
     moves++;
-    report(`Sorting: ${position - initial.currentIndex}/${target.length - initial.currentIndex - 1} upcoming positions checked…`);
+    report(`Sorting: ${moves}/${plan.length} moves…`);
     // Give native refreshes time to arrive; never flood the drag handler.
-    await delay(350);
+    await delay(50);
   }
   signal.throwIfAborted();
   const final = readSnapshot(panel);

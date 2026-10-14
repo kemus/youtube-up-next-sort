@@ -71,6 +71,40 @@ export function watchedIds(items: readonly Occurrence[], currentIndex: number): 
   return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
 }
 
+export interface Move {
+  id: string;
+  /** The entry the moved one is dropped directly after. */
+  after: string;
+}
+
+/**
+ * The fewest single-entry moves that turn `current` into `target`, both the
+ * same entries with the first `fixed` in place: the longest run already in
+ * target order stays, and each other entry, taken in target order, is dropped
+ * right after its target predecessor.
+ */
+export function planMoves(current: readonly string[], target: readonly string[], fixed: number): Move[] {
+  const rank = new Map(target.map((id, index) => [id, index]));
+  const upcoming = current.slice(fixed);
+  // Longest increasing subsequence of target ranks, by patience sorting.
+  const tails: number[] = [];
+  const previous: number[] = [];
+  upcoming.forEach((id, index) => {
+    const value = rank.get(id)!;
+    let low = 0;
+    let high = tails.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (rank.get(upcoming[tails[middle]!]!)! < value) low = middle + 1; else high = middle;
+    }
+    previous[index] = low > 0 ? tails[low - 1]! : -1;
+    tails[low] = index;
+  });
+  const kept = new Set<string>();
+  for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]!) kept.add(upcoming[index]!);
+  return target.slice(fixed).flatMap((id, offset) => kept.has(id) ? [] : [{ id, after: target[fixed + offset - 1]! }]);
+}
+
 export function sameOrder(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((id, index) => id === right[index]);
 }

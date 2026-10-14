@@ -41,6 +41,10 @@ the order from before that button's first click. Switching to another sort start
 a fresh cycle from the current order. Playback, membership, or external order
 changes reset the cycle; reloading also clears undo history.
 
+A sort leaves the longest run of videos already in the new order in place and
+drops each other video straight after its new predecessor, so a mostly sorted
+queue needs only a few moves.
+
 ### Settings
 
 The gear button opens a small panel. Settings are saved in your userscript
@@ -204,3 +208,12 @@ Version 0.5.0 saves the key only with **Save**, shows settings as toggles,
 turns Dedupe on by default, and keeps fetched details for eight hours. Eight
 unit tests and twenty-four fixture scenarios each in Firefox and Chromium
 passed on 2026-10-13.
+
+Version 0.6.0 plans the fewest moves and waits less between them: it checks for
+each move every 25 ms instead of 100 ms and pauses 50 ms instead of 350 ms
+after it. Ten unit tests and twenty-four fixture scenarios each in Firefox and
+Chromium passed on 2026-10-13. A signed-out headless Chromium probe on a real
+temporary queue of nine videos, with the current video second, ran a Duration
+cycle with each build: shortest first took 1.2 s and 3 moves (0.5.0: 8.2 s,
+5 moves), longest first 0.9 s and 6 moves (6.6 s, 6), and undo 0.5 s (4.4 s).
+Each order still held in YouTube's queue data and rows four seconds later.

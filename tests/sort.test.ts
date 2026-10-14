@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { duplicateIds, parseDuration, sameOrder, sortUpcoming, watchedIds } from '../src/sort.ts';
+import { duplicateIds, parseDuration, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
 
 test('parses YouTube time badges, including long videos and directional markers', () => {
   for (const [text, seconds] of [['0:07', 7], ['12:34', 754], ['1:02:03', 3723], ['123:45:59', 445559], [' \u200e2:03\u200f ', 123]] as const) {
@@ -65,4 +65,47 @@ test('an already-sorted tail and a final current item stay unchanged', () => {
   assert.deepEqual(sortUpcoming(items, 0), items);
   assert.deepEqual(sortUpcoming(items, 2), items);
   assert.equal(sameOrder(['a'], ['a', 'b']), false);
+});
+
+function applyMoves(order: readonly string[], moves: readonly Move[]): string[] {
+  let result = [...order];
+  for (const { id, after } of moves) {
+    result = result.filter(other => other !== id);
+    result.splice(result.indexOf(after) + 1, 0, id);
+  }
+  return result;
+}
+
+test('moves only entries outside the longest run already in target order', () => {
+  assert.deepEqual(planMoves(['x', 'd', 'a', 'b', 'c'], ['x', 'a', 'b', 'c', 'd'], 1), [{ id: 'd', after: 'c' }]);
+  assert.deepEqual(planMoves(['x', 'b', 'c', 'd', 'a'], ['x', 'a', 'b', 'c', 'd'], 1), [{ id: 'a', after: 'x' }]);
+  assert.deepEqual(planMoves(['x', 'a', 'b'], ['x', 'a', 'b'], 1), []);
+  assert.equal(planMoves(['x', 'e', 'd', 'c', 'b', 'a'], ['x', 'a', 'b', 'c', 'd', 'e'], 1).length, 4);
+});
+
+test('planned moves reach the target with the fewest moves', () => {
+  let seed = 7;
+  const random = (limit: number): number => (seed = (seed * 1103515245 + 12345) % 2 ** 31) % limit;
+  for (let round = 0; round < 300; round++) {
+    const size = random(12) + 1;
+    const fixed = random(size) + 1;
+    const current = Array.from({ length: size }, (_, index) => `v${index}`);
+    const tail = current.slice(fixed);
+    for (let index = tail.length - 1; index > 0; index--) {
+      const other = random(index + 1);
+      [tail[index], tail[other]] = [tail[other]!, tail[index]!];
+    }
+    const target = [...current.slice(0, fixed), ...tail];
+    const moves = planMoves(current, target, fixed);
+    assert.deepEqual(applyMoves(current, moves), target);
+    // Each move can fix at most one entry outside the longest in-order run.
+    const ranks = current.slice(fixed).map(id => target.indexOf(id));
+    const longest = ranks.map(() => 1);
+    ranks.forEach((rank, index) => {
+      for (let earlier = 0; earlier < index; earlier++) {
+        if (ranks[earlier]! < rank) longest[index] = Math.max(longest[index]!, longest[earlier]! + 1);
+      }
+    });
+    assert.equal(moves.length, ranks.length - Math.max(0, ...longest));
+  }
 });

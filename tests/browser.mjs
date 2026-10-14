@@ -173,6 +173,8 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(actual.visible, expected);
     assert.equal(actual.next, 'short'); // Independent player state must also update.
     assert.match(actual.status, /^Sorted loaded/);
+    // Only 'minute' (up) and 'long' (down) leave the run already in order.
+    assert.equal(actual.moves, 2);
     await click(page); await settled(page);
     assert.deepEqual((await result(page)).order, descending);
     await click(page); await settled(page);
