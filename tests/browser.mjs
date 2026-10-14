@@ -257,11 +257,13 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(await keyField(), ['', 'Paste a key']);
     assert.equal(await shown(page, '[data-sort=views]'), false);
     assert.equal(await shown(page, '[data-action=forget]'), false);
+    assert.equal(await shown(page, '.settings p'), false); // No explanatory text while settings work.
 
     await fixture(page, 'normal', {}, { noStorage: true });
     await press(page, '[data-action=settings]');
     assert.equal(await shown(page, '[data-setting=apiKey]'), false);
     assert.match(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('.settings p').textContent), /storage permission/);
+    assert.equal(await shown(page, '.settings p'), true);
 
     const enabled = { settings: { apiKey: 'key-1', fetch: true } };
     await fixture(page, 'normal', {}, enabled);

@@ -470,7 +470,7 @@
       form.append(label);
       return input;
     };
-    const fetchBox = field("fetch", "checkbox", "Fetch views, likes and upload dates when one of those sorts is clicked");
+    const fetchBox = field("fetch", "checkbox", "Fetch views, likes and upload dates");
     const keyInput = field("apiKey", "password", "YouTube Data API key");
     keyInput.autocomplete = "off";
     keyInput.spellcheck = false;
@@ -539,7 +539,8 @@
       showKeySaved();
       for (const input of [fetchBox, keyInput, dedupeBox, forgetKey]) input.disabled = !available;
       forgetKey.disabled ||= !settings.apiKey;
-      hint.textContent = available ? "Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key; scripts on this page could still intercept it while it is in use." : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
+      hint.hidden = available;
+      hint.textContent = available ? "" : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
     }
     function showKeySaved() {
       keyInput.value = "";
@@ -597,7 +598,6 @@
           "Current video stays fixed.",
           scope,
           saved ? "Native playlist moves can also change the saved playlist order." : "",
-          fetched.has(key) ? "Details come from the YouTube Data API when clicked." : "",
           settings.dedupe && step !== "undo" ? "Repeated upcoming videos are removed first." : ""
         ].filter(Boolean).join(" ");
       }
