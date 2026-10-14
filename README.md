@@ -14,7 +14,10 @@ contents with that file, and save. Reload YouTube after installation.
 
 Alternatively, with Node installed, run `npm run serve` and open
 <http://127.0.0.1:8731/playlist-sort.user.js> in Firefox. The server binds only to
-localhost and serves the compiled script. Stop it with Ctrl+C after installation.
+localhost and serves the compiled script. On a machine in a Tailscale network, it
+also listens on that machine's Tailscale addresses and prints their install
+links, so other devices on the tailnet can install from it; every device there
+can fetch the script while the server runs. Stop it with Ctrl+C after installation.
 If your manager doesn't intercept the link, use the editor installation above.
 
 Version 0.4.0 asks for the manager's storage permission (`GM_getValue` and
