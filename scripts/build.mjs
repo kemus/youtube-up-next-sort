@@ -14,10 +14,11 @@ await build({
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
 // @version      ${version}
-// @description  Sort upcoming videos by duration, title, or available posting date. Click to cycle ascending, descending, and undo.
+// @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @sandbox      raw
 // @inject-into  page
 // @noframes

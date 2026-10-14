@@ -3,7 +3,8 @@
 A TypeScript userscript that sorts **loaded upcoming videos** using the same
 native handler as YouTube's manual dragging. The current video and everything
 before it stay fixed. Equal values preserve their order from before the sort
-cycle. Live, upcoming, and unknown durations go last in both directions.
+cycle. Live, upcoming, and unknown durations go last in both directions. It can
+also remove watched or repeated videos through each row's own remove action.
 
 ## Install in Firefox
 
@@ -16,6 +17,10 @@ Alternatively, with Node installed, run `npm run serve` and open
 localhost and serves the compiled script. Stop it with Ctrl+C after installation.
 If your manager doesn't intercept the link, use the editor installation above.
 
+Version 0.4.0 asks for the manager's storage permission (`GM_getValue` and
+`GM_setValue`) to keep its settings, so updating from an earlier version needs
+the new permissions accepted.
+
 Open a queue or a playing, editable playlist and expand its panel. Each small
 neutral button cycles through three actions:
 
@@ -23,7 +28,8 @@ neutral button cycles through three actions:
 | --- | --- | --- | --- |
 | Duration | Shortest → longest | Longest → shortest | Undo |
 | Title | A → Z | Z → A | Undo |
-| Date, when available | Oldest → newest | Newest → oldest | Undo |
+| Views, Likes, when enabled | Fewest → most | Most → fewest | Undo |
+| Uploaded, when enabled | Oldest → newest | Newest → oldest | Undo |
 
 When YouTube's queue header holds only its **Save** button, the script shows a
 matching Save button first in the same row and hides YouTube's now-empty row.
@@ -35,10 +41,49 @@ the order from before that button's first click. Switching to another sort start
 a fresh cycle from the current order. Playback, membership, or external order
 changes reset the cycle; reloading also clears undo history.
 
-**Date** appears only when every loaded upcoming item already carries a posting
-date in YouTube's page data. The script never fetches extra metadata for it and
-never substitutes the date added to the playlist. ISO dates and recognizable
-English relative posting ages are supported; relative ages are approximate.
+### Settings
+
+The gear button opens a small panel. Settings are saved as you change them in
+your userscript manager's storage, which YouTube's own scripts cannot read. If
+the manager did not grant storage, the panel says so and nothing is saved.
+
+- **Fetch views, likes and upload dates**, with a YouTube Data API key. Off by
+  default. **Views**, **Likes**, and **Uploaded** appear only when this is on
+  and a key is entered.
+- **Remove repeated videos when sorting**. Off by default.
+
+### Views, Likes, and Uploaded
+
+YouTube's queue data has no view, like, or publish-date fields, so these sorts
+ask the YouTube Data API (`videos.list`) when clicked, and only then. A click
+requests the loaded upcoming videos not fetched yet, up to 50 per request; each
+request costs 1 unit of the key's daily quota (10,000 by default). Results are
+kept in memory until the page reloads. Videos without a value, such as hidden
+like counts or private videos, go last in both directions. A rejected key or a
+used-up quota shows a message under the row and moves nothing.
+
+Requests go from the page straight to `www.googleapis.com` without cookies and
+carry the key and the video IDs. Create the key in Google Cloud console with the
+YouTube Data API v3 enabled, and restrict it to that API. The API's publish time
+can differ from the upload time.
+
+### Removing videos
+
+**Remove watched** removes every loaded video that YouTube shows with watch
+progress, before or after the current video; the current video stays. Any
+progress above zero counts. YouTube's figure can lag behind what you watched, so
+a video you finished may still show as unwatched or partly watched.
+
+With **Remove repeated videos when sorting** on, each sort first removes
+upcoming copies of a video that is the current video, appears before it, or
+appears earlier among the upcoming ones. Entries at or before the current video
+are never removed as repeats.
+
+In a temporary queue, removals run at once. In a saved playlist they change the
+playlist itself, so the script first asks "Remove N videos from this saved
+playlist?" and does nothing unless you confirm. Removals run one at a time and
+each is checked in YouTube's queue data before the next. They cannot be undone,
+and a sort's Undo does not bring removed videos back.
 
 The active button becomes **Stop** while moves run. Scope and playlist details
 are in hover tooltips; only errors or required actions show extra text.
@@ -55,14 +100,16 @@ reports that it cannot read the queue, check your manager's injection setting.
 - Shuffle must be off. Radio/mix lists and unsupported layouts stop with a message.
 - **Moving items in an editable saved playlist can also save the new order**, just
   as manual dragging does. This is not a temporary-playlist replacement.
-- The script verifies the native queue data and rendered order after each move.
-  This is not server acknowledgement: YouTube handles its own network requests
-  and may reject or revert an update later.
-- Stopping leaves completed moves applied. Playback changes, additions/removals,
-  or unexpected reorders stop further moves. After an interrupted sort, the next
-  click offers undo if the same queue and current item still permit restoration.
-- YouTube's handler is undocumented and may change. The script has no private
-  HTTP client, OAuth flow, cookie access, or third-party runtime dependencies.
+- The script verifies the native queue data and rendered order after each move
+  or removal. This is not server acknowledgement: YouTube handles its own
+  network requests and may reject or revert an update later.
+- Stopping leaves completed moves and removals applied. Playback changes,
+  additions/removals, or unexpected reorders stop further changes. After an
+  interrupted sort, the next click offers undo if the same queue and current
+  item still permit restoration.
+- YouTube's handlers are undocumented and may change. The script's only network
+  request is the optional YouTube Data API call described above. It has no
+  OAuth flow, cookie access, or third-party runtime dependencies.
 
 ## Build and test
 
@@ -80,8 +127,9 @@ The compiled `.user.js` is committed for installation without build tooling.
 Browser tests use installed Firefox and Chromium with disposable headless profiles.
 Override `FIREFOX_BIN` and `CHROMIUM_BIN` if needed. They exercise native-handler
 fixtures, including independent playback state, failure/no-op detection,
-cancellation, duplicates, and concurrent changes. They do not use your regular
-profile or authenticate to YouTube.
+cancellation, duplicates, and concurrent changes, plus settings storage, a
+mocked Data API, and removals. They do not use your regular profile, contact
+the Data API, or authenticate to YouTube.
 
 For live acceptance, make a short queue with different lengths, start the first
 video, sort, and confirm both **Next** and automatic advancement follow the new
@@ -89,9 +137,13 @@ order. Repeat in a disposable editable playlist if you want playlist coverage.
 
 ## Source and integration
 
-- `src/sort.ts`: duration/date parsing and stable tail sorting by each key.
-- `src/youtube.ts`: native queue snapshots, moves, and verification.
-- `src/userscript.ts`: panel control, Save mirroring, and navigation lifecycle.
+- `src/sort.ts`: duration parsing, stable tail sorting by each key, and the
+  repeated and watched selections.
+- `src/youtube.ts`: native queue snapshots, moves, removals, and verification.
+- `src/stats.ts`: YouTube Data API requests and their in-memory cache.
+- `src/settings.ts`: settings in the userscript manager's storage.
+- `src/userscript.ts`: panel control, settings, Save mirroring, and navigation
+  lifecycle.
 - `scripts/build.mjs`: TypeScript bundle and userscript metadata.
 
 On 2026-09-04, inspection of YouTube's public frontend confirmed that
@@ -119,3 +171,19 @@ signed-in queue located Save as the only control under `#playlist-actions`
 playlist confirmed that its item data has no view, like, or publish-date fields.
 Thirteen fixture scenarios each passed in Firefox and Chromium; the live Save
 button was not yet tested.
+
+Version 0.4.0 adds settings, fetched sorts, and removals. On 2026-10-13, the
+YouTube watch page's Content-Security-Policy had no `connect-src`, and the Data
+API answered with `access-control-allow-origin: https://www.youtube.com`, so the
+page can call it directly. A dump from the user's signed-in queue located watch
+progress at `thumbnailOverlayResumePlaybackRenderer.percentDurationWatched` and
+each row's remove action as a `playlistEditEndpoint` with `ACTION_REMOVE_VIDEO`
+in its menu; the script passes that endpoint to `ytd-app`'s `resolveCommand`.
+Eight unit tests and twenty-one fixture scenarios each in Firefox and Chromium
+passed. A signed-out headless Chromium probe on a real temporary queue, with
+the built script injected and storage stubbed, removed three repeats on sort,
+removed entries before and after the current video while playback continued,
+and showed that typing in the key field did not trigger player hotkeys. Not
+tested: a real userscript manager with the new grants, a real API key, watch
+progress reported by YouTube itself, saved playlists, and Firefox on the live
+site. In one earlier probe a removed row reappeared when playback advanced.

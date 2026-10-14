@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseDuration, sameOrder, sortUpcoming } from '../src/sort.ts';
+import { duplicateIds, parseDuration, sameOrder, sortUpcoming, watchedIds } from '../src/sort.ts';
 
 test('parses YouTube time badges, including long videos and directional markers', () => {
   for (const [text, seconds] of [['0:07', 7], ['12:34', 754], ['1:02:03', 3723], ['123:45:59', 445559], [' \u200e2:03\u200f ', 123]] as const) {
@@ -30,6 +30,34 @@ test('sorts only upcoming occurrences; ties and unknowns stay stable', () => {
 test('requires a current occurrence and unique occurrence IDs', () => {
   for (const index of [-1, 1, 0.5, NaN]) assert.throws(() => sortUpcoming([{ id: 'a', duration: 1 }], index));
   assert.throws(() => sortUpcoming([{ id: 'a', duration: 1 }, { id: 'a', duration: 2 }], 0));
+});
+
+test('fetched keys sort numerically with missing values last in both directions', () => {
+  const items = [
+    { id: 'current', duration: 1, views: 5 }, { id: 'hidden', duration: 1, views: null },
+    { id: 'many', duration: 1, views: 1000 }, { id: 'unfetched', duration: 1 }, { id: 'few', duration: 1, views: 20 },
+  ];
+  assert.deepEqual(sortUpcoming(items, 0, 'views', 'asc').map(item => item.id), ['current', 'few', 'many', 'hidden', 'unfetched']);
+  assert.deepEqual(sortUpcoming(items, 0, 'views', 'desc').map(item => item.id), ['current', 'many', 'few', 'hidden', 'unfetched']);
+});
+
+test('repeats keep the current and earlier occurrences, then the first upcoming one', () => {
+  const items = [
+    { id: 'past', videoId: 'a', watched: 0 }, { id: 'past-again', videoId: 'a', watched: 0 },
+    { id: 'current', videoId: 'b', watched: 0 }, { id: 'of-past', videoId: 'a', watched: 0 },
+    { id: 'first', videoId: 'c', watched: 0 }, { id: 'of-current', videoId: 'b', watched: 0 },
+    { id: 'second', videoId: 'c', watched: 50 }, { id: 'no-id', videoId: '', watched: 0 },
+    { id: 'no-id-either', videoId: '', watched: 0 },
+  ];
+  assert.deepEqual(duplicateIds(items, 2), ['of-past', 'of-current', 'second']);
+});
+
+test('any watch progress counts as watched, except on the current video', () => {
+  const items = [
+    { id: 'past', videoId: 'a', watched: 100 }, { id: 'current', videoId: 'b', watched: 40 },
+    { id: 'started', videoId: 'c', watched: 1 }, { id: 'unwatched', videoId: 'd', watched: 0 },
+  ];
+  assert.deepEqual(watchedIds(items, 1), ['past', 'started']);
 });
 
 test('an already-sorted tail and a final current item stay unchanged', () => {

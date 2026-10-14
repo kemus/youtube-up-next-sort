@@ -1,8 +1,11 @@
-import { sameOrder, sortUpcoming, type Direction, type SortKey } from './sort.ts';
-import { readSnapshot, reorderPanel, type Snapshot } from './youtube.ts';
+import { loadSettings, saveSettings, storageAvailable } from './settings.ts';
+import { duplicateIds, sameOrder, sortUpcoming, watchedIds, type Direction, type SortKey } from './sort.ts';
+import { fetchStats } from './stats.ts';
+import { readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
 
 const HOST_TAG = 'yt-up-next-duration-sort';
 let running: AbortController | null = null;
+let settings = loadSettings();
 interface Cycle {
   key: SortKey;
   phase: Direction | 'partial';
@@ -13,12 +16,22 @@ interface Cycle {
 }
 const cycles = new Map<string, Cycle>();
 const controls = new Map<HTMLElement, () => void>();
-const names: Record<SortKey, string> = { duration: 'Duration', title: 'Title', date: 'Date' };
+const names: Record<SortKey, string> = { duration: 'Duration', title: 'Title', views: 'Views', likes: 'Likes', uploaded: 'Uploaded' };
+const plurals: Record<SortKey, string> = { duration: 'durations', title: 'titles', views: 'view counts', likes: 'like counts', uploaded: 'upload dates' };
 const descriptions: Record<SortKey, Record<Direction, string>> = {
   duration: { asc: 'shortest to longest', desc: 'longest to shortest' },
   title: { asc: 'A to Z', desc: 'Z to A' },
-  date: { asc: 'oldest to newest', desc: 'newest to oldest' },
+  views: { asc: 'fewest to most views', desc: 'most to fewest views' },
+  likes: { asc: 'fewest to most likes', desc: 'most to fewest likes' },
+  uploaded: { asc: 'oldest to newest upload', desc: 'newest to oldest upload' },
 };
+// These sorts need data YouTube's queue does not carry; it is fetched on click.
+const fetched: ReadonlySet<SortKey> = new Set(['views', 'likes', 'uploaded']);
+const canFetch = (): boolean => settings.fetch && settings.apiKey !== '';
+const unknown = (item: QueueItem, key: SortKey): boolean => key === 'duration' ? item.duration === null
+  : key === 'title' ? !item.title : key === 'views' ? item.views == null
+  : key === 'likes' ? item.likes == null : item.uploadedAt == null;
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
 const ids = (snapshot: Snapshot): string[] => snapshot.items.map(item => item.id);
 function matchingCycle(snapshot: Snapshot): Cycle | undefined {
   const cycle = cycles.get(snapshot.playlistId);
@@ -59,45 +72,92 @@ function mount(panel: HTMLElement): void {
   const style = document.createElement('style');
   style.textContent = `
     :host { display: block; padding: 4px 8px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
-    button { border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 3px 7px; margin-right: 4px; background: transparent; color: inherit; font: 400 11px/16px system-ui, sans-serif; cursor: pointer; }
+    button { border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 3px 7px; margin: 0 4px 4px 0; background: transparent; color: inherit; font: 400 11px/16px system-ui, sans-serif; cursor: pointer; }
     button[aria-pressed="true"] { color: var(--yt-spec-text-primary, #eee); }
     button:disabled { opacity: .5; cursor: default; }
-    button[hidden] { display: none; }
-    button:hover { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
-    button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+    button[hidden], .settings[hidden], .confirm[hidden] { display: none; }
+    button:hover:enabled { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
+    button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
     .save svg { width: 14px; height: 14px; fill: currentColor; }
-    .notice { margin: 4px 0 0; }
+    .settings label { display: block; margin: 3px 0; }
+    .settings input[type="password"] { display: block; box-sizing: border-box; width: 100%; max-width: 320px; margin-top: 2px; padding: 3px 6px; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; background: transparent; color: var(--yt-spec-text-primary, #eee); font: inherit; }
+    .settings p { margin: 4px 0; }
+    .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
+    .notice { margin: 0 0 4px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `;
-  const buttons = new Map<SortKey, HTMLButtonElement>();
-  for (const key of ['duration', 'title', 'date'] as const) {
+  const makeButton = (text: string): HTMLButtonElement => {
     const button = document.createElement('button');
     button.type = 'button';
+    button.textContent = text;
+    return button;
+  };
+  const buttons = new Map<SortKey, HTMLButtonElement>();
+  for (const key of ['duration', 'title', 'views', 'likes', 'uploaded'] as const) {
+    const button = makeButton(names[key]);
     button.dataset.sort = key;
-    button.textContent = names[key];
-    button.hidden = key === 'date';
+    button.hidden = fetched.has(key);
     buttons.set(key, button);
   }
+  const removeWatched = makeButton('Remove watched');
+  removeWatched.dataset.action = 'watched';
+  const gear = makeButton('⚙');
+  gear.dataset.action = 'settings';
+  gear.title = 'Sort settings';
+  gear.setAttribute('aria-label', 'Sort settings');
+  gear.setAttribute('aria-expanded', 'false');
+
+  const form = document.createElement('div');
+  form.className = 'settings';
+  form.hidden = true;
+  const field = (name: string, type: string, text: string): HTMLInputElement => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = type;
+    input.dataset.setting = name;
+    if (type === 'checkbox') label.append(input, ` ${text}`); else label.append(text, input);
+    form.append(label);
+    return input;
+  };
+  const fetchBox = field('fetch', 'checkbox', 'Fetch views, likes and upload dates when one of those sorts is clicked');
+  const keyInput = field('apiKey', 'password', 'YouTube Data API key');
+  keyInput.autocomplete = 'off';
+  keyInput.spellcheck = false;
+  const dedupeBox = field('dedupe', 'checkbox', 'Remove repeated videos when sorting');
+  const hint = document.createElement('p');
+  form.append(hint);
+
+  const confirmBar = document.createElement('div');
+  confirmBar.className = 'confirm';
+  confirmBar.hidden = true;
+  const confirmText = document.createElement('span');
+  const confirmYes = makeButton('Remove');
+  confirmYes.dataset.action = 'confirm';
+  const confirmNo = makeButton('Cancel');
+  confirmNo.dataset.action = 'cancel';
+  confirmBar.append(confirmText, confirmYes, confirmNo);
+
   const status = document.createElement('p');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   status.className = 'sr-only';
-  const save = document.createElement('button');
-  save.type = 'button';
+  const save = makeButton('');
   save.className = 'save';
   save.hidden = true;
-  root.append(style, save, ...buttons.values(), status);
+  root.append(style, save, ...buttons.values(), removeWatched, gear, confirmBar, status, form);
+  // Keep clicks from toggling YouTube's panel header, and typing in the key
+  // field from triggering YouTube's player hotkeys.
+  for (const type of ['click', 'keydown', 'keyup', 'keypress']) {
+    root.addEventListener(type, event => event.stopPropagation());
+  }
   const report = (message: string, attention = false): void => {
     status.textContent = message;
     status.className = attention ? 'notice' : 'sr-only';
   };
   let hiddenRow: { row: HTMLElement; display: string } | undefined;
   let saveLook = '';
-  save.addEventListener('click', event => {
-    event.stopPropagation();
-    nativeSave(panel)?.button.click();
-  });
+  save.addEventListener('click', () => { nativeSave(panel)?.button.click(); });
 
   // Mirror YouTube's Save into this row and hide its own row, which then holds
   // nothing else. YouTube's button stays in place and handles the click.
@@ -124,6 +184,32 @@ function mount(panel: HTMLElement): void {
     save.disabled = running !== null;
   }
 
+  function fillSettings(): void {
+    settings = loadSettings();
+    const available = storageAvailable();
+    fetchBox.checked = settings.fetch;
+    keyInput.value = settings.apiKey;
+    dedupeBox.checked = settings.dedupe;
+    for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
+    hint.textContent = available
+      ? 'Fetching costs 1 API quota unit per 50 videos. Your userscript manager stores the key; YouTube cannot read it.'
+      : 'Settings need the userscript manager’s storage permission. Reinstall the script to grant it.';
+  }
+  gear.addEventListener('click', () => {
+    form.hidden = !form.hidden;
+    gear.setAttribute('aria-expanded', String(!form.hidden));
+    if (!form.hidden) fillSettings();
+  });
+  for (const input of [fetchBox, keyInput, dedupeBox]) input.addEventListener('input', () => {
+    settings = { apiKey: keyInput.value.trim(), fetch: fetchBox.checked, dedupe: dedupeBox.checked };
+    try {
+      saveSettings(settings);
+    } catch (error) {
+      report(error instanceof Error ? error.message : String(error), true);
+    }
+    refreshControls();
+  });
+
   function describe(): void {
     syncSave();
     let snapshot: Snapshot | undefined;
@@ -135,13 +221,14 @@ function mount(panel: HTMLElement): void {
     }
     const cycle = snapshot ? matchingCycle(snapshot) : undefined;
     const upcoming = snapshot?.items.slice(snapshot.currentIndex + 1) ?? [];
+    const saved = snapshot !== undefined && !snapshot.playlistId.startsWith('TLPQ');
     for (const [key, button] of buttons) {
       if (button.dataset.running) continue;
       const active = cycle?.key === key;
       button.textContent = names[key] + (active ? cycle.phase === 'asc' ? ' ↑' : cycle.phase === 'desc' ? ' ↓' : ' ↶' : '');
       button.setAttribute('aria-pressed', String(active));
       button.disabled = running !== null;
-      button.hidden = key === 'date' && !active && !(upcoming.length > 1 && upcoming.every(item => item.postedAt != null));
+      button.hidden = fetched.has(key) && !active && !canFetch();
       const step = nextStep(cycle, key);
       const action = step === 'undo' ? `Undo ${names[key].toLowerCase()} sorting; restore the order before this cycle.`
         : `Sort upcoming videos ${descriptions[key][step]}.`;
@@ -149,57 +236,124 @@ function mount(panel: HTMLElement): void {
       const scope = snapshot?.total !== null && snapshot?.total !== undefined && snapshot.total > snapshot.items.length
         ? `Loaded ${snapshot.items.length} of ${snapshot.total}; only loaded upcoming videos are sorted.`
         : `${upcoming.length} upcoming loaded videos.`;
-      button.title = problem || `${action} Current video stays fixed. ${scope} ${snapshot?.playlistId.startsWith('TLPQ') ? '' : 'Native playlist moves can also change the saved playlist order.'} ${key === 'date' ? 'Uses existing posting dates; relative ages are approximate.' : ''}`.trim();
+      button.title = problem || [action, 'Current video stays fixed.', scope,
+        saved ? 'Native playlist moves can also change the saved playlist order.' : '',
+        fetched.has(key) ? 'Details come from the YouTube Data API when clicked.' : '',
+        settings.dedupe && step !== 'undo' ? 'Repeated upcoming videos are removed first.' : '',
+      ].filter(Boolean).join(' ');
+    }
+    if (!removeWatched.dataset.running) {
+      const count = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex).length : 0;
+      removeWatched.textContent = 'Remove watched';
+      removeWatched.disabled = running !== null || count === 0;
+      const action = count === 0 ? 'No loaded videos show watch progress.'
+        : `Remove ${plural(count, 'video')} that YouTube shows as started from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
+      removeWatched.setAttribute('aria-label', problem || action);
+      removeWatched.title = problem || action;
     }
   }
-  for (const [key, button] of buttons) button.addEventListener('click', async event => {
-    event.stopPropagation();
+
+  /** Run one queue action at a time; a second click on its button stops it. */
+  async function run(button: HTMLButtonElement, stopLabel: string, action: (signal: AbortSignal) => Promise<void>): Promise<void> {
     if (button.dataset.running === 'true') { running?.abort(); return; }
-    if (running) { report('Another queue sort is running.', true); return; }
+    if (running) { report('Another queue action is running.', true); return; }
     const abort = new AbortController();
     running = abort;
     button.dataset.running = 'true';
     button.textContent = 'Stop';
-    button.title = 'Stop sorting';
-    button.setAttribute('aria-label', 'Stop sorting');
+    button.title = stopLabel;
+    button.setAttribute('aria-label', stopLabel);
+    button.disabled = false;
     refreshControls();
+    try {
+      settings = loadSettings();
+      await action(abort.signal);
+    } catch (error) {
+      report(abort.signal.aborted ? 'Stopped. Completed changes remain applied.' :
+        error instanceof Error ? error.message : String(error), !abort.signal.aborted);
+      if (!abort.signal.aborted) console.warn('[YouTube Up Next Sort]', error);
+    } finally {
+      running = null;
+      delete button.dataset.running;
+      refreshControls();
+    }
+  }
+
+  function confirmed(count: number, signal: AbortSignal): Promise<boolean> {
+    confirmText.textContent = `Remove ${plural(count, 'video')} from this saved playlist? This cannot be undone.`;
+    confirmBar.hidden = false;
+    return new Promise(resolve => {
+      const done = new AbortController();
+      const finish = (answer: boolean): void => {
+        done.abort();
+        confirmBar.hidden = true;
+        resolve(answer);
+      };
+      confirmYes.addEventListener('click', () => finish(true), { signal: done.signal });
+      confirmNo.addEventListener('click', () => finish(false), { signal: done.signal });
+      signal.addEventListener('abort', () => finish(false), { signal: done.signal });
+    });
+  }
+
+  /** Remove through YouTube; saved playlists ask first. False when declined. */
+  async function remove(snapshot: Snapshot, targets: string[], signal: AbortSignal): Promise<boolean> {
+    if (!snapshot.playlistId.startsWith('TLPQ') && !(await confirmed(targets.length, signal))) {
+      signal.throwIfAborted();
+      return false;
+    }
+    await removeItems(panel, snapshot, targets, signal, report);
+    return true;
+  }
+
+  for (const [key, button] of buttons) button.addEventListener('click', () => run(button, 'Stop sorting', async signal => {
     report('Reading upcoming videos…');
     let attempted: { playlistId: string; cycle: Cycle } | undefined;
     try {
-      const snapshot = readSnapshot(panel);
-      const upcoming = snapshot.items.slice(snapshot.currentIndex + 1);
+      let snapshot = readSnapshot(panel);
       const existing = matchingCycle(snapshot);
       const step = nextStep(existing, key);
-      if (upcoming.length < 2) {
-        report('Load at least two upcoming videos to sort.', true);
-      } else if (step !== 'undo' && key === 'date' && upcoming.some(item => item.postedAt == null)) {
-        report('Posting dates are not available for all loaded upcoming videos.', true);
-      } else if (step !== 'undo' && upcoming.every(item => key === 'duration' ? item.duration === null : key === 'title' ? !item.title : false)) {
-        report(`No ${key === 'title' ? 'titles' : 'durations'} are available yet.`, true);
+      let baseline = existing?.key === key ? existing.baseline : ids(snapshot);
+      const repeats = step !== 'undo' && settings.dedupe ? duplicateIds(snapshot.items, snapshot.currentIndex) : [];
+      if (repeats.length > 0) {
+        if (!(await remove(snapshot, repeats, signal))) { report('Cancelled. Nothing was changed.'); return; }
+        snapshot = readSnapshot(panel);
+        baseline = baseline.filter(id => !repeats.includes(id));
+      }
+      const removedNote = repeats.length > 0 ? `Removed ${plural(repeats.length, 'repeated video')}. ` : '';
+      let items = snapshot.items;
+      const upcomingIds = new Set(ids(snapshot).slice(snapshot.currentIndex + 1));
+      if (upcomingIds.size < 2) {
+        report(`${removedNote}Load at least two upcoming videos to sort.`, true);
+        return;
+      }
+      if (step !== 'undo' && fetched.has(key)) {
+        if (!canFetch()) throw new Error('Turn on fetching and enter an API key in the sort settings.');
+        report('Fetching video details…');
+        const stats = await fetchStats(items.filter(item => upcomingIds.has(item.id)).map(item => item.videoId), settings.apiKey, signal);
+        items = items.map(item => ({ ...item, ...stats.get(item.videoId) }));
+      }
+      if (step !== 'undo' && items.every(item => !upcomingIds.has(item.id) || unknown(item, key))) {
+        report(`${removedNote}No ${plurals[key]} are available for the upcoming videos.`, true);
+        return;
+      }
+      const byId = new Map(items.map(item => [item.id, item]));
+      const target = step === 'undo' ? baseline : sortUpcoming(
+        baseline.map(id => byId.get(id)!), snapshot.currentIndex, key, step,
+      ).map(item => item.id);
+      const cycle: Cycle = { key, phase: 'partial', baseline, expected: ids(snapshot),
+        currentIndex: snapshot.currentIndex, currentId: snapshot.items[snapshot.currentIndex]!.id };
+      cycles.set(snapshot.playlistId, cycle);
+      attempted = { playlistId: snapshot.playlistId, cycle };
+      const moves = await reorderPanel(panel, snapshot, target, signal, report);
+      if (step === 'undo') {
+        cycles.delete(snapshot.playlistId);
+        report('Restored the order from before this sort cycle.');
       } else {
-        const baseline = existing?.key === key ? existing.baseline : ids(snapshot);
-        const byId = new Map(snapshot.items.map(item => [item.id, item]));
-        const target = step === 'undo' ? baseline : sortUpcoming(
-          baseline.map(id => byId.get(id)!), snapshot.currentIndex, key, step,
-        ).map(item => item.id);
-        const cycle: Cycle = { key, phase: 'partial', baseline, expected: ids(snapshot),
-          currentIndex: snapshot.currentIndex, currentId: snapshot.items[snapshot.currentIndex]!.id };
-        cycles.set(snapshot.playlistId, cycle);
-        attempted = { playlistId: snapshot.playlistId, cycle };
-        const moves = await reorderPanel(panel, snapshot, target, abort.signal, report);
-        if (step === 'undo') {
-          cycles.delete(snapshot.playlistId);
-          report('Restored the order from before this sort cycle.');
-        } else {
-          cycle.phase = step;
-          cycle.expected = target;
-          report(`Sorted loaded upcoming videos ${descriptions[key][step]} (${moves} native moves).`);
-        }
+        cycle.phase = step;
+        cycle.expected = target;
+        report(`Sorted loaded upcoming videos ${descriptions[key][step]} (${moves} native moves). ${removedNote}`.trim());
       }
     } catch (error) {
-      report(abort.signal.aborted ? 'Stopped. Completed native moves remain applied.' :
-        error instanceof Error ? error.message : String(error), !abort.signal.aborted);
-      if (!abort.signal.aborted) console.warn('[YouTube Up Next Sort]', error);
       if (attempted) {
         try {
           const after = readSnapshot(panel);
@@ -214,12 +368,17 @@ function mount(panel: HTMLElement): void {
           } else cycles.delete(attempted.playlistId);
         } catch { cycles.delete(attempted.playlistId); }
       }
-    } finally {
-      running = null;
-      delete button.dataset.running;
-      refreshControls();
+      throw error;
     }
-  });
+  }));
+  removeWatched.addEventListener('click', () => run(removeWatched, 'Stop removing', async signal => {
+    report('Reading the queue…');
+    const snapshot = readSnapshot(panel);
+    const watched = watchedIds(snapshot.items, snapshot.currentIndex);
+    if (watched.length === 0) { report('No loaded videos show watch progress.', true); return; }
+    if (!(await remove(snapshot, watched, signal))) { report('Cancelled. Nothing was changed.'); return; }
+    report(`Removed ${plural(watched.length, 'watched video')}.`);
+  }));
   panel.prepend(host); // Outside #items: native drop computes indices from childNodes.
   controls.set(host, describe);
   describe();

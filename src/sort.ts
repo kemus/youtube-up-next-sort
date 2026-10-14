@@ -2,10 +2,12 @@ export interface Item {
   id: string;
   duration: number | null;
   title?: string | null;
-  postedAt?: number | null;
+  views?: number | null;
+  likes?: number | null;
+  uploadedAt?: number | null;
 }
 
-export type SortKey = 'duration' | 'title' | 'date';
+export type SortKey = 'duration' | 'title' | 'views' | 'likes' | 'uploaded';
 export type Direction = 'asc' | 'desc';
 const titleOrder = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -19,22 +21,6 @@ export function parseDuration(text: string): number | null {
   return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
 }
 
-/** Only posting-date fields feed this parser, never playlist-added timestamps. */
-export function parsePostedDate(text: string, now = Date.now()): number | null {
-  const value = text.trim();
-  if (/^\d{4}-\d{2}-\d{2}(?:T[\d:.]+(?:Z|[+-]\d{2}:?\d{2}))?$/.test(value)) {
-    const timestamp = Date.parse(value);
-    return Number.isFinite(timestamp) && timestamp <= now ? timestamp : null;
-  }
-  // YouTube sometimes supplies only an English relative age. These are coarse
-  // estimates; unrecognized/localized labels are left unavailable, not guessed.
-  const relative = /^(?:(?:Streamed|Premiered)\s+)?(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i.exec(value);
-  if (!relative) return null;
-  const units: Record<string, number> = { second: 1, minute: 60, hour: 3600, day: 86400, week: 604800, month: 2629800, year: 31557600 };
-  const timestamp = now - Number(relative[1]) * units[relative[2]!.toLowerCase()]! * 1000;
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
 export function sortUpcoming<T extends Item>(
   items: readonly T[], currentIndex: number, key: SortKey = 'duration', direction: Direction = 'asc',
 ): T[] {
@@ -46,7 +32,8 @@ export function sortUpcoming<T extends Item>(
   }
   const upcoming = items.slice(currentIndex + 1).map((item, index) => ({ item, index }));
   const value = (item: Item): number | string | null => key === 'title' ? item.title?.trim() || null
-    : key === 'date' ? item.postedAt ?? null : item.duration;
+    : key === 'views' ? item.views ?? null : key === 'likes' ? item.likes ?? null
+    : key === 'uploaded' ? item.uploadedAt ?? null : item.duration;
   upcoming.sort((a, b) => {
     const left = value(a.item);
     const right = value(b.item);
@@ -58,6 +45,30 @@ export function sortUpcoming<T extends Item>(
     return comparison * (direction === 'asc' ? 1 : -1) || a.index - b.index;
   });
   return [...items.slice(0, currentIndex + 1), ...upcoming.map(entry => entry.item)];
+}
+
+export interface Occurrence {
+  id: string;
+  videoId: string;
+  watched: number;
+}
+
+/**
+ * Upcoming occurrences that repeat a video. The current and earlier occurrences
+ * always stay; among upcoming-only repeats the first stays.
+ */
+export function duplicateIds(items: readonly Occurrence[], currentIndex: number): string[] {
+  const seen = new Set<string>();
+  return items.flatMap((item, index) => {
+    if (!item.videoId) return [];
+    if (!seen.has(item.videoId)) { seen.add(item.videoId); return []; }
+    return index > currentIndex ? [item.id] : [];
+  });
+}
+
+/** Every occurrence with any recorded watch progress, except the current one. */
+export function watchedIds(items: readonly Occurrence[], currentIndex: number): string[] {
+  return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
 }
 
 export function sameOrder(left: readonly string[], right: readonly string[]): boolean {

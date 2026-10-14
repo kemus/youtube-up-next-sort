@@ -1,19 +1,23 @@
-import { parseDuration, parsePostedDate, sameOrder, type Item } from './sort.ts';
+import { parseDuration, sameOrder, type Item, type Occurrence } from './sort.ts';
 
 type RecordValue = Record<string, unknown>;
 type NativeElement = HTMLElement & {
   data?: RecordValue;
   polymerController?: NativeController;
   inst?: NativeController;
+  resolveCommand?: (command: RecordValue) => unknown;
 };
 interface NativeController {
+  resolveCommand?: (command: RecordValue) => unknown;
   data?: RecordValue;
   canReorder?: boolean;
   shuffleOn?: boolean;
   ytReorderableController?: { handleDrop?: (event: { currDragItem: HTMLElement }) => void };
 }
+export type QueueItem = Item & Occurrence;
 export interface Snapshot {
-  items: Item[];
+  items: QueueItem[];
+  entries: RecordValue[];
   currentIndex: number;
   playlistId: string;
   total: number | null;
@@ -58,13 +62,14 @@ function durationOf(data: RecordValue, row: HTMLElement): number | null {
   return null;
 }
 
-function postedDateOf(data: RecordValue, now: number): number | null {
-  for (const field of ['publishDate', 'datePublished', 'publishedTimeText']) {
-    const raw = data[field];
-    const timestamp = parsePostedDate(typeof raw === 'string' ? raw : textOf(raw), now);
-    if (timestamp !== null) return timestamp;
+/** YouTube's resume-bar percentage for this row; 0 when it records none. */
+function watchedOf(data: RecordValue): number {
+  const overlays = Array.isArray(data.thumbnailOverlays) ? data.thumbnailOverlays : [];
+  for (const overlay of overlays) {
+    const percent = record(record(overlay)?.thumbnailOverlayResumePlaybackRenderer)?.percentDurationWatched;
+    if (typeof percent === 'number' && percent > 0) return percent;
   }
-  return null;
+  return 0;
 }
 
 export function readSnapshot(panel: HTMLElement): Snapshot {
@@ -94,8 +99,7 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
   if (rows.some((row, index) => container.childNodes[index] !== row)) {
     throw new Error('Unsupported queue layout: video rows are not contiguous.');
   }
-  const now = Date.now();
-  const items = entries.map((entry, index): Item => {
+  const items = entries.map((entry, index): QueueItem => {
     const row = rows[index]!;
     const rowData = row.data;
     const id = entry.playlistSetVideoId;
@@ -105,7 +109,8 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
     return {
       id, duration: durationOf(entry, row),
       title: textOf(entry.title).trim() || row.querySelector('#video-title')?.textContent?.trim() || null,
-      postedAt: postedDateOf(entry, now),
+      videoId: typeof entry.videoId === 'string' ? entry.videoId : '',
+      watched: watchedOf(entry),
     };
   });
   if (new Set(items.map(item => item.id)).size !== items.length) {
@@ -116,7 +121,7 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
     throw new Error('Cannot locate the current video in the loaded queue. Try a short, fully loaded queue.');
   }
   const total = typeof data.totalVideos === 'number' ? data.totalVideos : null;
-  return { items, currentIndex: selected[0]!, playlistId, total, container, rows, controller };
+  return { items, entries, currentIndex: selected[0]!, playlistId, total, container, rows, controller };
 }
 
 const ids = (snapshot: Snapshot): string[] => snapshot.items.map(item => item.id);
@@ -202,6 +207,83 @@ export async function reorderPanel(
   checkSession(final, initial);
   if (!sameOrder(ids(final), target)) throw new Error('YouTube changed the order before verification finished. Try again.');
   return moves;
+}
+
+/** The row's own "Remove" menu action, only if it removes exactly this occurrence from this list. */
+function removeEndpoint(entry: RecordValue, id: string, playlistId: string): RecordValue | undefined {
+  const items = record(record(entry.menu)?.menuRenderer)?.items;
+  for (const item of Array.isArray(items) ? items : []) {
+    const endpoint = record(record(record(item)?.menuServiceItemRenderer)?.serviceEndpoint);
+    const edit = record(endpoint?.playlistEditEndpoint);
+    const actions = Array.isArray(edit?.actions) ? edit.actions : [];
+    const action = record(actions[0]);
+    if (actions.length === 1 && action?.action === 'ACTION_REMOVE_VIDEO' && action.setVideoId === id &&
+        edit?.playlistId === playlistId) return endpoint;
+  }
+  return undefined;
+}
+
+/**
+ * Remove occurrences one at a time through each row's own menu action, waiting
+ * for YouTube's queue data to drop each before the next: overlapping edits fail.
+ */
+export async function removeItems(
+  panel: HTMLElement,
+  initial: Snapshot,
+  remove: readonly string[],
+  signal: AbortSignal,
+  report: (message: string) => void,
+): Promise<number> {
+  const playlistId = initial.playlistId;
+  const currentId = initial.items[initial.currentIndex]!.id;
+  let expected = ids(initial);
+  if (remove.includes(currentId) || new Set(remove).size !== remove.length || remove.some(id => !expected.includes(id))) {
+    throw new Error('The requested removals no longer match this queue.');
+  }
+  const app = document.querySelector<NativeElement>('ytd-app');
+  const resolver = app && typeof app.resolveCommand !== 'function' ? controllerOf(app) : app;
+  if (typeof resolver?.resolveCommand !== 'function') throw new Error('YouTube’s command handler is unavailable here.');
+  const sameSession = (snapshot: Snapshot): void => {
+    if (snapshot.playlistId !== playlistId || snapshot.items[snapshot.currentIndex]?.id !== currentId) {
+      throw new Error('Playback or the queue changed. Removing stopped; completed removals remain applied.');
+    }
+  };
+  let removed = 0;
+  for (const id of remove) {
+    signal.throwIfAborted();
+    const before = readSnapshot(panel);
+    sameSession(before);
+    if (!sameOrder(ids(before), expected)) {
+      throw new Error('The queue changed while removing. Completed removals remain applied; try again.');
+    }
+    const endpoint = removeEndpoint(before.entries[expected.indexOf(id)]!, id, playlistId);
+    if (!endpoint) throw new Error('YouTube offers no remove action for a video here. Removing stopped.');
+    const nextOrder = expected.filter(other => other !== id);
+    try {
+      resolver.resolveCommand!(endpoint);
+    } catch (error) {
+      throw new Error(`YouTube’s native removal failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const deadline = Date.now() + 3500;
+    let confirmed = false;
+    while (Date.now() < deadline) {
+      await delay(100);
+      signal.throwIfAborted();
+      let after: Snapshot;
+      try { after = readSnapshot(panel); } catch { continue; }
+      sameSession(after);
+      if (sameOrder(ids(after), nextOrder)) { confirmed = true; break; }
+      if (!sameOrder(ids(after), expected)) {
+        throw new Error('Unexpected queue change after a native removal. Removing stopped.');
+      }
+    }
+    if (!confirmed) throw new Error('YouTube did not confirm the removal in its queue data. Removing stopped.');
+    expected = nextOrder;
+    removed++;
+    report(`Removing: ${removed}/${remove.length} videos…`);
+    await delay(350);
+  }
+  return removed;
 }
 
 function restoreVisualIfUnchanged(before: Snapshot, row: HTMLElement, oldNext: ChildNode | null, expected: string[]): void {
