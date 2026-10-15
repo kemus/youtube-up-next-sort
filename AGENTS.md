@@ -11,3 +11,9 @@ worktree so the served build changes only when verified work is merged to main.
 After each merge, tell the user to reload YouTube. If the tracking tab was
 closed, ask the user to reopen the install URL and click "Track external
 edits" again.
+
+Firefox on devarc installs over Tailscale from
+http://100.97.231.82:8731/playlist-sort.user.js with a plain Install, not
+tracking, so it updates only when reinstalled. After a merge, if the user
+wants it on devarc, keep the server running and ask them to reopen that link
+and click Install. HTTPS-Only Mode there has an exception for that address.
