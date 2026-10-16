@@ -216,81 +216,80 @@ export async function reorderPanel(
   return moves;
 }
 
-/** The row's own "Remove" menu action, only if it removes exactly this occurrence from this list. */
-function removeEndpoint(entry: RecordValue, id: string, playlistId: string): RecordValue | undefined {
+/** The row's own "Remove" menu item, only if it removes exactly this occurrence from this list. */
+function removeMenuItem(entry: RecordValue, id: string, playlistId: string): RecordValue | undefined {
   const items = record(record(entry.menu)?.menuRenderer)?.items;
   for (const item of Array.isArray(items) ? items : []) {
-    const endpoint = record(record(record(item)?.menuServiceItemRenderer)?.serviceEndpoint);
-    const edit = record(endpoint?.playlistEditEndpoint);
+    const menuItem = record(record(item)?.menuServiceItemRenderer);
+    const edit = record(record(menuItem?.serviceEndpoint)?.playlistEditEndpoint);
     const actions = Array.isArray(edit?.actions) ? edit.actions : [];
     const action = record(actions[0]);
     if (actions.length === 1 && action?.action === 'ACTION_REMOVE_VIDEO' && action.setVideoId === id &&
-        edit?.playlistId === playlistId) return endpoint;
+        edit?.playlistId === playlistId) return menuItem;
   }
   return undefined;
 }
 
 /**
- * Remove occurrences one at a time through each row's own menu action, waiting
- * for YouTube's queue data to drop each before the next: overlapping edits fail.
+ * Remove occurrences with one edit built from their rows' own remove items.
+ * Separate edits overlap on YouTube's server, which rejects some of them and
+ * later restores those rows; one edit removes them all at once.
  */
-export async function removeItems(
-  panel: HTMLElement,
-  initial: Snapshot,
-  remove: readonly string[],
-  signal: AbortSignal,
-  report: (message: string) => void,
-): Promise<number> {
+export function removeItems(initial: Snapshot, remove: readonly string[]): void {
   const playlistId = initial.playlistId;
-  const currentId = initial.items[initial.currentIndex]!.id;
-  let expected = ids(initial);
-  if (remove.includes(currentId) || new Set(remove).size !== remove.length || remove.some(id => !expected.includes(id))) {
+  const order = ids(initial);
+  if (remove.length === 0 || remove.includes(order[initial.currentIndex]!) ||
+      new Set(remove).size !== remove.length || remove.some(id => !order.includes(id))) {
     throw new Error('The requested removals no longer match this queue.');
   }
+  const items = remove.map(id => removeMenuItem(initial.entries[order.indexOf(id)]!, id, playlistId));
+  if (items.some(item => !item)) throw new Error('YouTube offers no remove action for a video here. Nothing was removed.');
+  const first = items[0]!;
+  const endpoint = record(first.serviceEndpoint)!;
+  const edit = record(endpoint.playlistEditEndpoint)!;
+  const combined: RecordValue = { ...first, serviceEndpoint: { ...endpoint, playlistEditEndpoint: {
+    ...edit,
+    actions: items.flatMap(item => record(record(item!.serviceEndpoint)!.playlistEditEndpoint)!.actions as unknown[]),
+    // The queue drops rows through these client actions, as for YouTube's own menu.
+    ...(Array.isArray(edit.clientActions) ? { clientActions: [{ playlistRemoveVideosAction: { setVideoIds: [...remove] } }] } : {}),
+  } } };
+  const native = customElements.get('ytd-menu-service-item-renderer') !== undefined;
   const app = document.querySelector<NativeElement>('ytd-app');
   const resolver = app && typeof app.resolveCommand !== 'function' ? controllerOf(app) : app;
-  if (typeof resolver?.resolveCommand !== 'function') throw new Error('YouTube’s command handler is unavailable here.');
-  const sameSession = (snapshot: Snapshot): void => {
-    if (snapshot.playlistId !== playlistId || snapshot.items[snapshot.currentIndex]?.id !== currentId) {
-      throw new Error('Playback or the queue changed. Removing stopped; completed removals remain applied.');
+  if (!native && typeof resolver?.resolveCommand !== 'function') throw new Error('YouTube’s command handler is unavailable here.');
+  try {
+    if (native) {
+      // Select a menu item exactly as YouTube's own row menu does.
+      const item = document.createElement('ytd-menu-service-item-renderer') as NativeElement;
+      item.hidden = true;
+      item.data = combined;
+      initial.rows[order.indexOf(remove[0]!)]!.append(item);
+      try { item.click(); } finally { item.remove(); }
+    } else {
+      resolver!.resolveCommand!(combined.serviceEndpoint as RecordValue);
     }
-  };
-  let removed = 0;
-  for (const id of remove) {
-    signal.throwIfAborted();
-    const before = readSnapshot(panel);
-    sameSession(before);
-    if (!sameOrder(ids(before), expected)) {
-      throw new Error('The queue changed while removing. Completed removals remain applied; try again.');
-    }
-    const endpoint = removeEndpoint(before.entries[expected.indexOf(id)]!, id, playlistId);
-    if (!endpoint) throw new Error('YouTube offers no remove action for a video here. Removing stopped.');
-    const nextOrder = expected.filter(other => other !== id);
-    try {
-      resolver.resolveCommand!(endpoint);
-    } catch (error) {
-      throw new Error(`YouTube’s native removal failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const deadline = Date.now() + 3500;
-    let confirmed = false;
-    while (Date.now() < deadline) {
-      await delay(100);
-      signal.throwIfAborted();
-      let after: Snapshot;
-      try { after = readSnapshot(panel); } catch { continue; }
-      sameSession(after);
-      if (sameOrder(ids(after), nextOrder)) { confirmed = true; break; }
-      if (!sameOrder(ids(after), expected)) {
-        throw new Error('Unexpected queue change after a native removal. Removing stopped.');
-      }
-    }
-    if (!confirmed) throw new Error('YouTube did not confirm the removal in its queue data. Removing stopped.');
-    expected = nextOrder;
-    removed++;
-    report(`Removing: ${removed}/${remove.length} videos…`);
-    await delay(350);
+  } catch (error) {
+    throw new Error(`YouTube’s native removal failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return removed;
+}
+
+/**
+ * The queue once none of `gone` is in it, or as it stands after a short wait,
+ * so a sort that follows removals works on the rows YouTube actually kept.
+ */
+export async function afterRemoval(panel: HTMLElement, gone: readonly string[], signal: AbortSignal): Promise<Snapshot> {
+  const deadline = Date.now() + 1500;
+  for (;;) {
+    signal.throwIfAborted();
+    try {
+      const snapshot = readSnapshot(panel);
+      if (Date.now() >= deadline || !snapshot.items.some(item => gone.includes(item.id))) return snapshot;
+    } catch (error) {
+      // Rows may briefly lag behind the queue data while YouTube re-renders.
+      if (Date.now() >= deadline) throw error;
+    }
+    await delay(25);
+  }
 }
 
 function restoreVisualIfUnchanged(before: Snapshot, row: HTMLElement, oldNext: ChildNode | null, expected: string[]): void {

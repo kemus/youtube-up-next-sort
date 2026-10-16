@@ -97,9 +97,12 @@ are never removed as repeats.
 
 In a temporary queue, removals run at once. In a saved playlist they change the
 playlist itself, so the script first asks "Remove N videos from this saved
-playlist?" and does nothing unless you confirm. Removals run one at a time and
-each is checked in YouTube's queue data before the next. They cannot be undone,
-and a sort's Undo does not bring removed videos back.
+playlist?" and does nothing unless you confirm. All the videos go in one
+playlist edit, run through a copy of YouTube's own "Remove" menu item, and the
+script does not wait for YouTube to drop the rows or check that it did; a video
+YouTube keeps stays in the list. A sort after Dedupe waits up to 1.5 seconds
+for the repeats to go, then sorts what is left. Removals cannot be undone, and
+a sort's Undo does not bring removed videos back.
 
 The active button becomes **Stop** while moves run. Scope and playlist details
 are in hover tooltips; only errors or required actions show extra text.
@@ -116,8 +119,9 @@ reports that it cannot read the queue, check your manager's injection setting.
 - Shuffle must be off. Radio/mix lists and unsupported layouts stop with a message.
 - **Moving items in an editable saved playlist can also save the new order**, just
   as manual dragging does. This is not a temporary-playlist replacement.
-- The script verifies the native queue data and rendered order after each move
-  or removal, waiting for them only when a move does not show at once. This is not server acknowledgement: YouTube handles its own
+- The script verifies the native queue data and rendered order after each move,
+  waiting for them only when a move does not show at once; removals are not
+  verified. This is not server acknowledgement: YouTube handles its own
   network requests and may reject or revert an update later.
 - Stopping leaves completed moves and removals applied. Playback changes,
   additions/removals, or unexpected reorders stop further changes. After an
@@ -155,7 +159,7 @@ order. Repeat in a disposable editable playlist if you want playlist coverage.
 
 - `src/sort.ts`: duration parsing, stable tail sorting by each key, and the
   repeated and watched selections.
-- `src/youtube.ts`: native queue snapshots, moves, removals, and verification.
+- `src/youtube.ts`: native queue snapshots, verified moves, and removals.
 - `src/stats.ts`: YouTube Data API requests and their eight-hour cache.
 - `src/settings.ts`: settings in the userscript manager's storage.
 - `src/userscript.ts`: panel control, settings, Save mirroring, and navigation
@@ -231,3 +235,18 @@ headless Chromium probe on a temporary queue of sixteen upcoming videos, all
 shortest first in 1.0 s and 11 moves (0.6.0: 2.4 s), longest first in 1.1 s
 and 14 moves (2.7 s), and undo in 0.5 s (1.1 s). A second 0.7.0 run took
 0.9 s, 1.3 s and 0.6 s, and each order held four seconds later.
+
+Version 0.8.0 removes all chosen videos in one edit and no longer waits for or
+checks each removal. In a signed-out headless Chromium probe on 2026-10-15,
+this YouTube build's `ytd-app` had no `resolveCommand`, so 0.7.0's removal path
+could not run there; clicking a script-made `ytd-menu-service-item-renderer`
+holding a row's remove item ran it as YouTube's own menu does. Four such
+removals fired back to back all vanished at once, but the server rejected some
+of the overlapping edits and one row came back four seconds later; one edit
+carrying all four removals dropped them at once and they stayed gone eight
+seconds later. With the built script injected into a queue of nine videos
+holding three repeats, Duration with Dedupe removed the three and sorted in
+120 ms, and the queue still held six unique videos eight seconds later. Ten
+unit tests and twenty-nine fixture scenarios each in Firefox and Chromium
+passed. Not tested: a signed-in queue, saved playlists, and Remove watched on
+real watch progress.

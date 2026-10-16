@@ -9,7 +9,8 @@ const descending = ['past', 'current', 'long', 'minute', 'short', 'tie', 'live',
 
 // options: settings (manager storage contents; dedupe is off unless set or freshStorage),
 // freshStorage (empty storage, for defaults), noStorage, watched ({ id: percent }),
-// api ('quota' for a quota error), removeMode ('noop' for an ignored removal).
+// api ('quota' for a quota error), removeMode ('noop' for an ignored removal, 'late' for one applied
+// after 200 ms), removeVia ('command' when YouTube's menu item is unavailable).
 async function fixture(page, mode = 'normal', extra = {}, options = {}) {
   await page.goto('about:blank');
   // Each fixture needs a fresh page, without an earlier copy of the userscript.
@@ -84,19 +85,33 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       ] } },
     } }));
     const data = { contents: entries, playlistId, currentIndex: 1, totalVideos: entries.length, ...extra };
-    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], requests: [], apiKeys: [], playerNext: 'long', data };
+    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], edits: [], commands: 0, requests: [], apiKeys: [], playerNext: 'long', data };
     document.addEventListener('keydown', () => state.keys++);
-    // Stands in for YouTube's command handler running a row's own menu action.
-    app.resolveCommand = endpoint => {
+    // Stands in for YouTube running a playlist edit, with every action it carries.
+    const runEdit = endpoint => {
       const edit = endpoint.playlistEditEndpoint;
-      if (options.removeMode === 'noop' || edit.actions[0].action !== 'ACTION_REMOVE_VIDEO') return;
-      const token = id => entry => entry.playlistPanelVideoRenderer.playlistSetVideoId === id;
-      const current = data.contents[data.currentIndex].playlistPanelVideoRenderer.playlistSetVideoId;
-      data.contents.splice(data.contents.findIndex(token(edit.actions[0].setVideoId)), 1);
-      data.currentIndex = data.contents.findIndex(token(current));
-      state.removed.push(edit.actions[0].setVideoId);
-      render();
+      if (options.removeMode === 'noop' || edit.actions.some(action => action.action !== 'ACTION_REMOVE_VIDEO')) return;
+      state.edits.push(edit.actions.length);
+      const apply = () => {
+        const token = id => entry => entry.playlistPanelVideoRenderer.playlistSetVideoId === id;
+        const current = data.contents[data.currentIndex].playlistPanelVideoRenderer.playlistSetVideoId;
+        for (const { setVideoId } of edit.actions) {
+          data.contents.splice(data.contents.findIndex(token(setVideoId)), 1);
+          state.removed.push(setVideoId);
+        }
+        data.currentIndex = data.contents.findIndex(token(current));
+        render();
+      };
+      if (options.removeMode === 'late') setTimeout(apply, 200); else apply();
     };
+    // YouTube's menu item, which runs its service endpoint when clicked;
+    // removeVia 'command' leaves only the command handler.
+    if (options.removeVia !== 'command') {
+      customElements.define('ytd-menu-service-item-renderer', class extends HTMLElement {
+        connectedCallback() { this.addEventListener('click', () => runEdit(this.data.serviceEndpoint)); }
+      });
+    }
+    app.resolveCommand = endpoint => { state.commands++; runEdit(endpoint); };
     const render = () => {
       panel.querySelector('#items').replaceChildren(...data.contents.map(entry => {
         const row = document.createElement('ytd-playlist-panel-video-renderer');
@@ -373,11 +388,40 @@ for (const [browserName, executablePath] of [
     assert.equal(actual.current, 0);
     assert.match(actual.status, /^Removed 2 watched videos/);
 
+    // All removals go in one edit, without waiting for YouTube to drop the rows.
+    await fixture(page, 'normal', {}, { watched: { past: 100, long: 10, short: 5 }, removeMode: 'late' });
+    await press(page, '[data-action=watched]');
+    actual = await page.evaluate(() => ({ edits: window.fixture.edits, commands: window.fixture.commands, removed: window.fixture.removed.length }));
+    assert.deepEqual(actual, { edits: [3], commands: 0, removed: 0 });
+    await idle(page);
+    assert.match((await result(page)).status, /^Removed 3 watched videos/);
+    await page.waitForFunction(() => window.fixture.removed.length === 3);
+
+    // Without YouTube's menu item, the edit goes to its command handler.
+    await fixture(page, 'normal', {}, { watched: { past: 100, long: 10 }, removeVia: 'command' });
+    await press(page, '[data-action=watched]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual(actual.removed, ['past', 'long']);
+    assert.deepEqual(await page.evaluate(() => [window.fixture.edits, window.fixture.commands]), [[2], 1]);
+
+    // An ignored removal is not an error.
     await fixture(page, 'normal', {}, { watched: { long: 10 }, removeMode: 'noop' });
     await press(page, '[data-action=watched]'); await idle(page);
     actual = await result(page);
-    assert.match(actual.status, /did not confirm the removal/);
+    assert.match(actual.status, /^Removed 1 watched video/);
     assert.equal(actual.order.length, 8);
+
+    // A sort after dedupe waits for a late removal, and sorts a repeat YouTube kept.
+    await fixture(page, 'normal', {}, { settings: { dedupe: true }, removeMode: 'late' });
+    await click(page); await idle(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['past', 'current', 'short', 'minute', 'long', 'live', 'unknown']);
+    assert.match(actual.status, /Removed 1 repeated video\.$/);
+    await fixture(page, 'normal', {}, { settings: { dedupe: true }, removeMode: 'noop' });
+    await click(page); await idle(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, expected);
+    assert.match(actual.status, /^Sorted loaded[^.]*\([0-9]+ native moves\)\.?$/);
 
     // Saved playlists ask before removing anything.
     await fixture(page, 'normal', { playlistId: 'PL-owned' }, { watched: { long: 10 } });
@@ -391,7 +435,7 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), false);
     await press(page, '[data-action=watched]'); await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['long']);
-    console.log(`${browserName}: 25 browser fixture scenarios passed`);
+    console.log(`${browserName}: 29 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }

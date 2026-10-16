@@ -1,7 +1,7 @@
 import { loadSettings, saveSettings, storageAvailable } from './settings.ts';
 import { duplicateIds, sameOrder, sortUpcoming, watchedIds, type Direction, type SortKey } from './sort.ts';
 import { fetchStats } from './stats.ts';
-import { readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
+import { afterRemoval, readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
 
 const HOST_TAG = 'yt-up-next-duration-sort';
 let running: AbortController | null = null;
@@ -336,7 +336,7 @@ function mount(panel: HTMLElement): void {
       signal.throwIfAborted();
       return false;
     }
-    await removeItems(panel, snapshot, targets, signal, report);
+    removeItems(snapshot, targets);
     return true;
   }
 
@@ -349,12 +349,17 @@ function mount(panel: HTMLElement): void {
       const step = nextStep(existing, key);
       let baseline = existing?.key === key ? existing.baseline : ids(snapshot);
       const repeats = step !== 'undo' && settings.dedupe ? duplicateIds(snapshot.items, snapshot.currentIndex) : [];
+      let removedCount = 0;
       if (repeats.length > 0) {
         if (!(await remove(snapshot, repeats, signal))) { report('Cancelled. Nothing was changed.'); return; }
-        snapshot = readSnapshot(panel);
-        baseline = baseline.filter(id => !repeats.includes(id));
+        // Sort whatever YouTube kept, even a repeat it did not drop in time.
+        const before = snapshot.items.length;
+        snapshot = await afterRemoval(panel, repeats, signal);
+        removedCount = before - snapshot.items.length;
+        const kept = new Set(ids(snapshot));
+        baseline = baseline.filter(id => kept.has(id));
       }
-      const removedNote = repeats.length > 0 ? `Removed ${plural(repeats.length, 'repeated video')}. ` : '';
+      const removedNote = removedCount > 0 ? `Removed ${plural(removedCount, 'repeated video')}. ` : '';
       let items = snapshot.items;
       const upcomingIds = new Set(ids(snapshot).slice(snapshot.currentIndex + 1));
       if (upcomingIds.size < 2) {
