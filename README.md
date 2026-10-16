@@ -8,11 +8,17 @@ also remove watched or repeated videos through each row's own remove action.
 
 ## Install in Firefox
 
-The built script is [dist/playlist-sort.user.js](dist/playlist-sort.user.js).
-In Tampermonkey or Violentmonkey, create a new script, replace the entire editor
-contents with that file, and save. Reload YouTube after installation.
+With Tampermonkey or Violentmonkey installed, open
+<https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js>
+and click Install, then reload YouTube. The script names that link as its
+update source, so the manager installs each new version on its regular update
+check, or at once with its "Check for updates" command.
 
-Alternatively, with Node installed, run `npm run serve` and open
+The built script is [dist/playlist-sort.user.js](dist/playlist-sort.user.js).
+To install without the link, create a new script in the manager, replace the
+entire editor contents with that file, and save.
+
+For development, with Node installed, run `npm run serve` and open
 <http://127.0.0.1:8731/playlist-sort.user.js> in Firefox. The server binds only to
 localhost and serves the compiled script. On a machine in a Tailscale network, it
 also listens on that machine's Tailscale addresses and prints their install

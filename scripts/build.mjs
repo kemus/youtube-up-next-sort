@@ -15,6 +15,9 @@ await build({
 // @namespace    urn:kemus:youtube-up-next-sort
 // @version      ${version}
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
+// @homepageURL  https://github.com/kemus/youtube-up-next-sort
+// @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
+// @updateURL    https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
 // @match        https://www.youtube.com/*
 // @run-at       document-idle
 // @grant        GM_getValue
