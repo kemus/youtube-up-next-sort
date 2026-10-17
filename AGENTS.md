@@ -2,18 +2,16 @@
 
 ## Installing updates
 
-Violentmonkey in Firefox Developer Edition on regnar tracks
-http://127.0.0.1:8731/playlist-sort.user.js with "Track external edits", so it
-reinstalls the script whenever the served `dist/playlist-sort.user.js` changes.
-Agents may keep `mise exec -- npm run serve` running from the main worktree,
-and start it again if it stopped, without asking. Do feature work in a separate
-worktree so the served build changes only when verified work is merged to main.
-After each merge, tell the user to reload YouTube. If the tracking tab was
-closed, ask the user to reopen the install URL and click "Track external
-edits" again.
+Violentmonkey in Firefox on regnar and devarc installs the script from
+https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js,
+which the script also names as its update URL, so each higher `@version` on
+main reaches both machines on Violentmonkey's daily update check. Bump the
+version in every change that reaches main, and do feature work in a separate
+worktree.
 
-Firefox on devarc installs over Tailscale from
-http://100.97.231.82:8731/playlist-sort.user.js with a plain Install, not
-tracking, so it updates only when reinstalled. After a merge, if the user
-wants it on devarc, keep the server running and ask them to reopen that link
-and click Install. HTTPS-Only Mode there has an exception for that address.
+Agents may push verified merges on main to github.com/kemus/youtube-up-next-sort
+(public) without asking. After a push, tell the user to click Violentmonkey's
+"Check for updates" and reload YouTube.
+
+Agents may keep `mise exec -- npm run serve` running from the main worktree
+to test a build before it is pushed.
