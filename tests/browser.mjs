@@ -308,6 +308,22 @@ for (const [browserName, executablePath] of [
     await click(page); await settled(page);
     assert.deepEqual((await result(page)).order, ['current', 'short', 'tie', 'minute', 'long', 'past', 'live', 'unknown']);
 
+    // Watched videos move to the top, in order, above the current and sorted ones; nothing is removed.
+    await fixture(page, 'normal', {}, { settings: { watchedFirst: true, watchedPercent: 50 }, watched: { long: 60, minute: 100, current: 100, short: 40 } });
+    assert.match((await result(page)).detail, /Watched videos move to the top/);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['long', 'minute', 'past', 'current', 'short', 'tie', 'live', 'unknown']);
+    assert.deepEqual(actual.visible, actual.order);
+    assert.equal(actual.current, 3);
+    assert.deepEqual(actual.removed, []);
+    await click(page); await settled(page);
+    assert.deepEqual((await result(page)).order, ['long', 'minute', 'past', 'current', 'short', 'tie', 'live', 'unknown']);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, original);
+    assert.equal(actual.current, 1);
+
     for (const mode of ['throw', 'noop']) {
       await fixture(page, mode); await click(page); await settled(page);
       actual = await result(page);
@@ -444,6 +460,7 @@ for (const [browserName, executablePath] of [
     [['fetch', 'Use API key', true], ['dedupe', 'Dedupe on sort', false],
       ['includeCurrent', 'Include current video in sorting, and swap to first sorted video', false],
       ['includeAbove', 'Include unwatched videos that are above the current video in sorting', false],
+      ['watchedFirst', 'Move watched videos above current and sorted videos', false],
       ['button-duration', 'Duration', false], ['button-title', 'Title', false], ['button-views', 'Views', true],
       ['button-likes', 'Likes', true], ['button-uploaded', 'Date', true], ['button-watched', 'Watched', false], ['button-above', 'Above', false]]);
     // The key field comes first, then the toggle that uses it.

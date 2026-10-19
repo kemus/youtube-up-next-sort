@@ -61,6 +61,8 @@ export interface ArrangeOptions<T> {
   includeCurrent?: boolean;
   /** Sort the unwatched videos above the current one with the upcoming ones. */
   includeAbove?: boolean;
+  /** Move watched videos, except the current one, above everything else, in order. */
+  watchedFirst?: boolean;
   /** Whether a video counts as watched; none do without it. */
   watched?: (item: T) => boolean;
 }
@@ -72,14 +74,16 @@ export interface ArrangeOptions<T> {
 export function partition<T extends Item>(items: readonly T[], currentIndex: number, options: ArrangeOptions<T> = {}): { top: T[]; pool: T[] } {
   checkItems(items, currentIndex);
   const watched = options.watched ?? (() => false);
+  const first: T[] = [];
   const top: T[] = [];
   const pool: T[] = [];
   items.forEach((item, index) => {
+    if (index !== currentIndex && options.watchedFirst === true && watched(item)) { first.push(item); return; }
     const sorted = index > currentIndex ||
       (index === currentIndex ? options.includeCurrent === true : options.includeAbove === true && !watched(item));
     (sorted ? pool : top).push(item);
   });
-  return { top, pool };
+  return { top: [...first, ...top], pool };
 }
 
 /** The whole queue after sorting its pool; see partition. */

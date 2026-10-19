@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.13.0
+// @version      0.14.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -39,7 +39,7 @@
     if (storageAvailable()) GM_setValue(name, value);
   }
   function loadSettings() {
-    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]), includeCurrent: false, includeAbove: false };
+    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]), includeCurrent: false, includeAbove: false, watchedFirst: false };
     const apiKey = GM_getValue("apiKey", "");
     return {
       apiKey: typeof apiKey === "string" ? apiKey : "",
@@ -48,7 +48,8 @@
       watchedPercent: percent(GM_getValue("watchedPercent", 0)),
       buttons: normalizeButtons(GM_getValue("buttons", [])),
       includeCurrent: GM_getValue("includeCurrent", false) === true,
-      includeAbove: GM_getValue("includeAbove", false) === true
+      includeAbove: GM_getValue("includeAbove", false) === true,
+      watchedFirst: GM_getValue("watchedFirst", false) === true
     };
   }
   function saveSettings(settings2) {
@@ -60,6 +61,7 @@
     GM_setValue("buttons", normalizeButtons(settings2.buttons).map(({ key, on }) => ({ key, on })));
     GM_setValue("includeCurrent", settings2.includeCurrent);
     GM_setValue("includeAbove", settings2.includeAbove);
+    GM_setValue("watchedFirst", settings2.watchedFirst);
   }
 
   // src/sort.ts
@@ -95,13 +97,18 @@
   function partition(items, currentIndex, options = {}) {
     checkItems(items, currentIndex);
     const watched = options.watched ?? (() => false);
+    const first = [];
     const top = [];
     const pool = [];
     items.forEach((item, index) => {
+      if (index !== currentIndex && options.watchedFirst === true && watched(item)) {
+        first.push(item);
+        return;
+      }
       const sorted = index > currentIndex || (index === currentIndex ? options.includeCurrent === true : options.includeAbove === true && !watched(item));
       (sorted ? pool : top).push(item);
     });
-    return { top, pool };
+    return { top: [...first, ...top], pool };
   }
   function arrange(items, currentIndex, key, direction, options = {}) {
     const { top, pool } = partition(items, currentIndex, options);
@@ -674,6 +681,8 @@
     currentBox.parentElement.title = "Sort the playing video with the upcoming ones, then play whichever video sorts first.";
     const aboveBox = toggle("includeAbove", "Include unwatched videos that are above the current video in sorting");
     aboveBox.parentElement.title = "Sort the unwatched videos above the playing one with the upcoming ones. Watched at decides what counts as watched.";
+    const firstBox = toggle("watchedFirst", "Move watched videos above current and sorted videos");
+    firstBox.parentElement.title = "When sorting, move watched videos to the top of the queue, in their order, without removing them.";
     const percentLabel = document.createElement("label");
     percentLabel.className = "percent";
     percentLabel.title = "How much of a video YouTube must show as seen for it to count as watched.";
@@ -767,10 +776,11 @@
       dedupeBox.checked = settings.dedupe;
       currentBox.checked = settings.includeCurrent;
       aboveBox.checked = settings.includeAbove;
+      firstBox.checked = settings.watchedFirst;
       percentInput.value = String(settings.watchedPercent);
       showPercent();
       keyInput.value = settings.apiKey;
-      for (const input of [fetchBox, keyInput, dedupeBox, currentBox, aboveBox, percentInput]) input.disabled = !available;
+      for (const input of [fetchBox, keyInput, dedupeBox, currentBox, aboveBox, firstBox, percentInput]) input.disabled = !available;
       updateKeyButtons();
       renderButtonList();
       hint.hidden = available;
@@ -806,7 +816,8 @@
         dedupe: dedupeBox.checked,
         watchedPercent: Number(percentInput.value),
         includeCurrent: currentBox.checked,
-        includeAbove: aboveBox.checked
+        includeAbove: aboveBox.checked,
+        watchedFirst: firstBox.checked
       };
       commit();
     };
@@ -856,7 +867,7 @@
         target?.focus();
       }
     }
-    for (const input of [fetchBox, dedupeBox, currentBox, aboveBox, percentInput]) input.addEventListener("input", () => store(settings.apiKey));
+    for (const input of [fetchBox, dedupeBox, currentBox, aboveBox, firstBox, percentInput]) input.addEventListener("input", () => store(settings.apiKey));
     percentInput.addEventListener("input", showPercent);
     keyInput.addEventListener("input", updateKeyButtons);
     saveKey.addEventListener("click", () => {
@@ -896,6 +907,7 @@
           action,
           settings.includeCurrent ? "The current video is sorted too, and the first sorted video plays." : "Current video stays fixed.",
           settings.includeAbove ? "Unwatched videos above it are sorted too." : "",
+          settings.watchedFirst ? "Watched videos move to the top." : "",
           scope,
           saved ? "Native playlist moves can also change the saved playlist order." : "",
           settings.dedupe && step !== "undo" ? "Repeated upcoming videos are removed first." : ""
@@ -999,6 +1011,7 @@
         const options = {
           includeCurrent: settings.includeCurrent,
           includeAbove: settings.includeAbove,
+          watchedFirst: settings.watchedFirst,
           watched: (item) => isWatched(item, settings.watchedPercent)
         };
         const baseOf = (list) => {
@@ -1047,7 +1060,7 @@
           report("Restored the order from before this sort cycle.");
         } else {
           cycle.phase = step;
-          report(`Sorted loaded ${options.includeCurrent || options.includeAbove ? "videos" : "upcoming videos"} ${descriptions[key][step]} (${moves} native moves).${playNote} ${removedNote}`.trim());
+          report(`Sorted loaded ${options.includeCurrent || options.includeAbove || options.watchedFirst ? "videos" : "upcoming videos"} ${descriptions[key][step]} (${moves} native moves).${playNote} ${removedNote}`.trim());
         }
       } catch (error) {
         if (attempted) {

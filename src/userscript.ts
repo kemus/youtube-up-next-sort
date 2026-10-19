@@ -206,6 +206,8 @@ function mount(panel: HTMLElement): void {
   currentBox.parentElement!.title = 'Sort the playing video with the upcoming ones, then play whichever video sorts first.';
   const aboveBox = toggle('includeAbove', 'Include unwatched videos that are above the current video in sorting');
   aboveBox.parentElement!.title = 'Sort the unwatched videos above the playing one with the upcoming ones. Watched at decides what counts as watched.';
+  const firstBox = toggle('watchedFirst', 'Move watched videos above current and sorted videos');
+  firstBox.parentElement!.title = 'When sorting, move watched videos to the top of the queue, in their order, without removing them.';
   const percentLabel = document.createElement('label');
   percentLabel.className = 'percent';
   percentLabel.title = 'How much of a video YouTube must show as seen for it to count as watched.';
@@ -307,10 +309,11 @@ function mount(panel: HTMLElement): void {
     dedupeBox.checked = settings.dedupe;
     currentBox.checked = settings.includeCurrent;
     aboveBox.checked = settings.includeAbove;
+    firstBox.checked = settings.watchedFirst;
     percentInput.value = String(settings.watchedPercent);
     showPercent();
     keyInput.value = settings.apiKey;
-    for (const input of [fetchBox, keyInput, dedupeBox, currentBox, aboveBox, percentInput]) input.disabled = !available;
+    for (const input of [fetchBox, keyInput, dedupeBox, currentBox, aboveBox, firstBox, percentInput]) input.disabled = !available;
     updateKeyButtons();
     renderButtonList();
     hint.hidden = available;
@@ -342,7 +345,7 @@ function mount(panel: HTMLElement): void {
   };
   const store = (apiKey: string): void => {
     settings = { ...settings, apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked,
-      watchedPercent: Number(percentInput.value), includeCurrent: currentBox.checked, includeAbove: aboveBox.checked };
+      watchedPercent: Number(percentInput.value), includeCurrent: currentBox.checked, includeAbove: aboveBox.checked, watchedFirst: firstBox.checked };
     commit();
   };
   // One switch and a pair of move buttons per row button, in row order.
@@ -395,7 +398,7 @@ function mount(panel: HTMLElement): void {
       target?.focus();
     }
   }
-  for (const input of [fetchBox, dedupeBox, currentBox, aboveBox, percentInput]) input.addEventListener('input', () => store(settings.apiKey));
+  for (const input of [fetchBox, dedupeBox, currentBox, aboveBox, firstBox, percentInput]) input.addEventListener('input', () => store(settings.apiKey));
   percentInput.addEventListener('input', showPercent);
   keyInput.addEventListener('input', updateKeyButtons);
   saveKey.addEventListener('click', () => { keyInput.value = keyInput.value.trim(); store(keyInput.value); });
@@ -431,7 +434,8 @@ function mount(panel: HTMLElement): void {
         : `${upcoming.length} upcoming loaded videos.`;
       button.title = problem || [action, settings.includeCurrent
         ? 'The current video is sorted too, and the first sorted video plays.' : 'Current video stays fixed.',
-        settings.includeAbove ? 'Unwatched videos above it are sorted too.' : '', scope,
+        settings.includeAbove ? 'Unwatched videos above it are sorted too.' : '',
+        settings.watchedFirst ? 'Watched videos move to the top.' : '', scope,
         saved ? 'Native playlist moves can also change the saved playlist order.' : '',
         settings.dedupe && step !== 'undo' ? 'Repeated upcoming videos are removed first.' : '',
       ].filter(Boolean).join(' ');
@@ -533,7 +537,7 @@ function mount(panel: HTMLElement): void {
       const removedNote = removedCount > 0 ? `Removed ${plural(removedCount, 'repeated video')}. ` : '';
       let items = snapshot.items;
       const options: ArrangeOptions<QueueItem> = { includeCurrent: settings.includeCurrent, includeAbove: settings.includeAbove,
-        watched: item => isWatched(item, settings.watchedPercent) };
+        watchedFirst: settings.watchedFirst, watched: item => isWatched(item, settings.watchedPercent) };
       // A later step sorts the baseline order, so ties and the pool's members
       // match the first step's, wherever the playing video now sits.
       const baseOf = (list: readonly QueueItem[]): QueueItem[] => {
@@ -583,7 +587,7 @@ function mount(panel: HTMLElement): void {
         report('Restored the order from before this sort cycle.');
       } else {
         cycle.phase = step;
-        report(`Sorted loaded ${options.includeCurrent || options.includeAbove ? 'videos' : 'upcoming videos'} ${descriptions[key][step]} (${moves} native moves).${playNote} ${removedNote}`.trim());
+        report(`Sorted loaded ${options.includeCurrent || options.includeAbove || options.watchedFirst ? 'videos' : 'upcoming videos'} ${descriptions[key][step]} (${moves} native moves).${playNote} ${removedNote}`.trim());
       }
     } catch (error) {
       if (attempted) {

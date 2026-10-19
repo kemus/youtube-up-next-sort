@@ -80,6 +80,9 @@ is saved.
 - **Include unwatched videos that are above the current video in sorting**:
   sort them with the upcoming ones, below the current video; videos above it
   that count as watched (see **Watched at**) keep their place. Off by default.
+- **Move watched videos above current and sorted videos**: when sorting, move
+  every watched video except the current one to the top of the queue, in its
+  order, without removing it. Off by default.
 - **Watched at**: how much of a video, from 0 to 100% in 5% steps, YouTube must
   show as seen for it to count as watched. At 0%, the default, any progress
   counts; a video with no progress never counts.
@@ -281,3 +284,20 @@ holding three repeats, Duration with Dedupe removed the three and sorted in
 unit tests and twenty-nine fixture scenarios each in Firefox and Chromium
 passed. Not tested: a signed-in queue, saved playlists, and Remove watched on
 real watch progress.
+
+Versions 0.8.2 to 0.14.0 rework the row and settings: a compact one-line row,
+Date, the trash-icon Watched and Above buttons, Use API key, Dedupe on sort,
+Watched at, per-button switches and order, and the three queue options above.
+On 2026-10-19, sixteen unit tests and the fixture scenarios each in Firefox
+and Chromium passed. The fixture page now has a real origin, so a played row
+can change the address bar. A signed-out headless Chromium probe injected each
+build into a temporary queue of eight videos. Including the current video
+sorted it, played the first sorted video, then sorted the other way and undid
+the cycle. In some runs YouTube left every selected flag, and the highlighted
+row, on the old position after the video started, while `currentIndex` and
+the address bar named the new one; the script accepts `currentIndex` when it
+names the video in the address bar. Including unwatched videos above moved
+the three above the current video into the sorted pool. With watch progress
+injected into two upcoming entries, Move watched videos placed them at the top
+above the current video. Not tested: a signed-in queue with real watch
+progress, and Save, which was tested only through a copy of its button.
