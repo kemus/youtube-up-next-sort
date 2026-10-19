@@ -316,6 +316,8 @@ for (const [browserName, executablePath] of [
     assert.equal(await page.evaluate(() => window.gmStore.fetch), true);
     assert.equal(await shown(page, '[data-action=save-key]'), false); // Nothing left to save.
     for (const key of ['views', 'likes', 'uploaded']) assert.equal(await shown(page, `[data-sort=${key}]`), true);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
+      .querySelectorAll('[data-sort]')].map(button => button.textContent.trim())), ['Duration', 'Title', 'Views', 'Likes', 'Date']);
     assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
     // The field keeps the saved key masked and editable; Clear and Save share its line.
     const keyField = () => page.evaluate(() => {

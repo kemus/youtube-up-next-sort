@@ -38,7 +38,7 @@ neutral button cycles through three actions:
 | Duration | Shortest → longest | Longest → shortest | Undo |
 | Title | A → Z | Z → A | Undo |
 | Views, Likes, when enabled | Fewest → most | Most → fewest | Undo |
-| Uploaded, when enabled | Oldest → newest | Newest → oldest | Undo |
+| Date, when enabled | Oldest → newest | Newest → oldest | Undo |
 
 When YouTube's queue header holds only its **Save** button, the script shows a
 matching Save button first in the same row and hides YouTube's now-empty row.
@@ -69,11 +69,11 @@ is saved.
 - **Use API key**, below the key field, fetches views, likes and upload dates
   with a YouTube Data API key. Off by default, and disabled until a key is
   saved; **Clear** turns it off.
-  **Views**, **Likes**, and **Uploaded** appear only when this is on.
+  **Views**, **Likes**, and **Date** appear only when this is on.
 - **Dedupe**: remove repeated videos when sorting. On by default, unless the
   manager grants no storage.
 
-### Views, Likes, and Uploaded
+### Views, Likes, and Date
 
 YouTube's queue data has no view, like, or publish-date fields, so these sorts
 ask the YouTube Data API (`videos.list`) when clicked, and only then. A click

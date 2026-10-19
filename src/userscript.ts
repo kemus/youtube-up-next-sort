@@ -16,7 +16,7 @@ interface Cycle {
 }
 const cycles = new Map<string, Cycle>();
 const controls = new Map<HTMLElement, () => void>();
-const names: Record<SortKey, string> = { duration: 'Duration', title: 'Title', views: 'Views', likes: 'Likes', uploaded: 'Uploaded' };
+const names: Record<SortKey, string> = { duration: 'Duration', title: 'Title', views: 'Views', likes: 'Likes', uploaded: 'Date' };
 const plurals: Record<SortKey, string> = { duration: 'durations', title: 'titles', views: 'view counts', likes: 'like counts', uploaded: 'upload dates' };
 const descriptions: Record<SortKey, Record<Direction, string>> = {
   duration: { asc: 'shortest to longest', desc: 'longest to shortest' },
