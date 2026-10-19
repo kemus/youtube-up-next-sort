@@ -1,4 +1,4 @@
-import { loadSettings, saveSettings, storageAvailable } from './settings.ts';
+import { loadSettings, saveSettings, storageAvailable, type ButtonKey } from './settings.ts';
 import { aboveIds, duplicateIds, sameOrder, sortUpcoming, watchedIds, type Direction, type SortKey } from './sort.ts';
 import { fetchStats } from './stats.ts';
 import { afterRemoval, readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
@@ -17,6 +17,7 @@ interface Cycle {
 const cycles = new Map<string, Cycle>();
 const controls = new Map<HTMLElement, () => void>();
 const names: Record<SortKey, string> = { duration: 'Duration', title: 'Title', views: 'Views', likes: 'Likes', uploaded: 'Date' };
+const buttonNames: Record<ButtonKey, string> = { ...names, watched: 'Watched', above: 'Above' };
 const plurals: Record<SortKey, string> = { duration: 'durations', title: 'titles', views: 'view counts', likes: 'like counts', uploaded: 'upload dates' };
 const descriptions: Record<SortKey, Record<Direction, string>> = {
   duration: { asc: 'shortest to longest', desc: 'longest to shortest' },
@@ -131,6 +132,9 @@ function mount(panel: HTMLElement): void {
     .settings input[role="switch"]:disabled { cursor: default; }
     .settings label:has(input:disabled) { opacity: .5; }
     .settings p { margin: 4px 0; }
+    .settings .buttons { display: grid; grid-template-columns: max-content auto auto; align-items: center; gap: 2px 4px; justify-content: start; margin: 2px 0 4px; }
+    .settings .buttons label { margin: 0; }
+    .settings .buttons button { padding: 0 4px; }
     .settings input[type="range"] { width: 120px; margin: 0; accent-color: var(--yt-spec-call-to-action, #3ea6ff); }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
@@ -211,6 +215,14 @@ function mount(panel: HTMLElement): void {
   };
   percentLabel.append('Watched at', percentInput, percentText);
   form.append(percentLabel);
+  const buttonsHeading = document.createElement('div');
+  buttonsHeading.id = 'buttons-heading';
+  buttonsHeading.textContent = 'Buttons';
+  const buttonList = document.createElement('div');
+  buttonList.className = 'buttons';
+  buttonList.setAttribute('role', 'group');
+  buttonList.setAttribute('aria-labelledby', 'buttons-heading');
+  form.append(buttonsHeading, buttonList);
   const hint = document.createElement('p');
   form.append(hint);
 
@@ -233,7 +245,13 @@ function mount(panel: HTMLElement): void {
   save.hidden = true;
   const row = document.createElement('div');
   row.className = 'row';
-  row.append(save, ...buttons.values(), removeWatched, removeAbove, gear);
+  const rowButtons = new Map<ButtonKey, HTMLButtonElement>([...buttons, ['watched', removeWatched], ['above', removeAbove]]);
+  row.append(save, ...rowButtons.values(), gear);
+  // Lay out the row in the saved order; appending an element already in place keeps focus.
+  function orderRow(): void {
+    const order = [save, ...settings.buttons.map(({ key }) => rowButtons.get(key)!), gear];
+    if (order.some((button, index) => row.children[index] !== button)) row.append(...order);
+  }
   root.append(style, row, confirmBar, status, form);
   // Keep clicks from toggling YouTube's panel header, and typing in the key
   // field from triggering YouTube's player hotkeys.
@@ -286,6 +304,7 @@ function mount(panel: HTMLElement): void {
     keyInput.value = settings.apiKey;
     for (const input of [fetchBox, keyInput, dedupeBox, percentInput]) input.disabled = !available;
     updateKeyButtons();
+    renderButtonList();
     hint.hidden = available;
     hint.textContent = available ? '' : 'Settings need the userscript manager’s storage permission. Reinstall the script to grant it.';
   }
@@ -303,17 +322,71 @@ function mount(panel: HTMLElement): void {
     gear.setAttribute('aria-expanded', String(!form.hidden));
     if (!form.hidden) fillSettings();
   });
-  const store = (apiKey: string): void => {
-    settings = { apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked,
-      watchedPercent: Number(percentInput.value) };
+  const commit = (): void => {
     try {
       saveSettings(settings);
     } catch (error) {
       report(error instanceof Error ? error.message : String(error), true);
     }
     updateKeyButtons();
+    renderButtonList();
     refreshControls();
   };
+  const store = (apiKey: string): void => {
+    settings = { ...settings, apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked,
+      watchedPercent: Number(percentInput.value) };
+    commit();
+  };
+  // One switch and a pair of move buttons per row button, in row order.
+  function renderButtonList(): void {
+    const available = storageAvailable();
+    const focused = (root.activeElement as HTMLElement | null)?.dataset;
+    const focusKey = focused?.button;
+    const focusMove = focused?.move;
+    buttonList.replaceChildren();
+    settings.buttons.forEach(({ key, on }, index) => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.setAttribute('role', 'switch');
+      input.dataset.setting = `button-${key}`;
+      input.dataset.button = key;
+      input.checked = on;
+      const needsKey = fetched.has(key as SortKey);
+      input.disabled = !available || (needsKey && !canFetch());
+      if (needsKey) label.title = canFetch() ? `Show the ${buttonNames[key]} sort.` : 'Needs Use API key.';
+      input.addEventListener('input', () => {
+        settings = { ...settings, buttons: settings.buttons.map(entry => entry.key === key ? { key, on: input.checked } : entry) };
+        commit();
+      });
+      label.append(input, buttonNames[key]);
+      const mover = (move: 'up' | 'down', text: string): HTMLButtonElement => {
+        const button = makeButton(text);
+        button.dataset.move = move;
+        button.dataset.button = key;
+        button.setAttribute('aria-label', `Move ${buttonNames[key]} ${move}`);
+        button.title = button.getAttribute('aria-label')!;
+        const target = move === 'up' ? index - 1 : index + 1;
+        button.disabled = !available || target < 0 || target >= settings.buttons.length;
+        button.addEventListener('click', () => {
+          const order = [...settings.buttons];
+          [order[index], order[target]] = [order[target]!, order[index]!];
+          settings = { ...settings, buttons: order };
+          commit();
+        });
+        return button;
+      };
+      buttonList.append(label, mover('up', '↑'), mover('down', '↓'));
+    });
+    // Keep focus on the moved button, or its partner once it reaches an end.
+    if (focusKey) {
+      const pick = (selector: string): HTMLElement | null => buttonList.querySelector(selector);
+      const target = focusMove
+        ? pick(`[data-move="${focusMove}"][data-button="${focusKey}"]:enabled`) ?? pick(`[data-move][data-button="${focusKey}"]:enabled`)
+        : pick(`input[data-button="${focusKey}"]`);
+      target?.focus();
+    }
+  }
   for (const input of [fetchBox, dedupeBox, percentInput]) input.addEventListener('input', () => store(settings.apiKey));
   percentInput.addEventListener('input', showPercent);
   keyInput.addEventListener('input', updateKeyButtons);
@@ -322,6 +395,8 @@ function mount(panel: HTMLElement): void {
 
   function describe(): void {
     syncSave();
+    orderRow();
+    const shown = (key: ButtonKey): boolean => settings.buttons.find(entry => entry.key === key)?.on !== false;
     let snapshot: Snapshot | undefined;
     let problem = '';
     try {
@@ -338,7 +413,7 @@ function mount(panel: HTMLElement): void {
       button.textContent = names[key] + (active ? cycle.phase === 'asc' ? ' ↑' : cycle.phase === 'desc' ? ' ↓' : ' ↶' : '');
       button.setAttribute('aria-pressed', String(active));
       button.disabled = running !== null;
-      button.hidden = fetched.has(key) && !active && !canFetch();
+      button.hidden = !active && (!shown(key) || fetched.has(key) && !canFetch());
       const step = nextStep(cycle, key);
       const action = step === 'undo' ? `Undo ${names[key].toLowerCase()} sorting; restore the order before this cycle.`
         : `Sort upcoming videos ${descriptions[key][step]}.`;
@@ -355,6 +430,7 @@ function mount(panel: HTMLElement): void {
       const count = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex, settings.watchedPercent).length : 0;
       removalLabel(removeWatched, 'Watched');
       removeWatched.disabled = running !== null || count === 0;
+      removeWatched.hidden = !shown('watched');
       const action = count === 0 ? `No loaded videos ${watchedRule()}.`
         : `Remove ${plural(count, 'video')} that YouTube shows as watched (${watchedRule().replace(/^show /, '')}) from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
       removeWatched.setAttribute('aria-label', problem || action);
@@ -364,6 +440,7 @@ function mount(panel: HTMLElement): void {
       const count = snapshot ? aboveIds(snapshot.items, snapshot.currentIndex).length : 0;
       removalLabel(removeAbove, 'Above');
       removeAbove.disabled = running !== null || count === 0;
+      removeAbove.hidden = !shown('above');
       const action = count === 0 ? 'No loaded videos are above the current video.'
         : `Remove the ${plural(count, 'video')} above the current video from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
       removeAbove.setAttribute('aria-label', problem || action);

@@ -76,6 +76,11 @@ is saved.
 - **Watched at**: how much of a video, from 0 to 100% in 5% steps, YouTube must
   show as seen for it to count as watched. At 0%, the default, any progress
   counts; a video with no progress never counts.
+- **Buttons**: a switch per row button shows or hides it, and **↑**/**↓**
+  move it earlier or later in the row. All are on by default, in the order
+  Duration, Title, Views, Likes, Date, Watched, Above. The Views, Likes and Date
+  switches are locked while **Use API key** is off. A sort whose cycle is in
+  progress stays visible until the cycle ends.
 
 ### Views, Likes, and Date
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.10.0
+// @version      0.11.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -17,6 +17,17 @@
 "use strict";
 (() => {
   // src/settings.ts
+  var BUTTON_KEYS = ["duration", "title", "views", "likes", "uploaded", "watched", "above"];
+  function normalizeButtons(value) {
+    const seen = /* @__PURE__ */ new Set();
+    const stored = Array.isArray(value) ? value.flatMap((entry) => {
+      const key = entry?.key;
+      if (!BUTTON_KEYS.includes(key) || seen.has(key)) return [];
+      seen.add(key);
+      return [{ key, on: entry.on !== false }];
+    }) : [];
+    return [...stored, ...BUTTON_KEYS.filter((key) => !seen.has(key)).map((key) => ({ key, on: true }))];
+  }
   var percent = (value) => typeof value === "number" && Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : 0;
   function storageAvailable() {
     return typeof GM_getValue === "function" && typeof GM_setValue === "function";
@@ -28,13 +39,14 @@
     if (storageAvailable()) GM_setValue(name, value);
   }
   function loadSettings() {
-    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0 };
+    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]) };
     const apiKey = GM_getValue("apiKey", "");
     return {
       apiKey: typeof apiKey === "string" ? apiKey : "",
       fetch: GM_getValue("fetch", false) === true,
       dedupe: GM_getValue("dedupe", true) === true,
-      watchedPercent: percent(GM_getValue("watchedPercent", 0))
+      watchedPercent: percent(GM_getValue("watchedPercent", 0)),
+      buttons: normalizeButtons(GM_getValue("buttons", []))
     };
   }
   function saveSettings(settings2) {
@@ -43,6 +55,7 @@
     GM_setValue("fetch", settings2.fetch);
     GM_setValue("dedupe", settings2.dedupe);
     GM_setValue("watchedPercent", percent(settings2.watchedPercent));
+    GM_setValue("buttons", normalizeButtons(settings2.buttons).map(({ key, on }) => ({ key, on })));
   }
 
   // src/sort.ts
@@ -449,6 +462,7 @@
   var cycles = /* @__PURE__ */ new Map();
   var controls = /* @__PURE__ */ new Map();
   var names = { duration: "Duration", title: "Title", views: "Views", likes: "Likes", uploaded: "Date" };
+  var buttonNames = { ...names, watched: "Watched", above: "Above" };
   var plurals = { duration: "durations", title: "titles", views: "view counts", likes: "like counts", uploaded: "upload dates" };
   var descriptions = {
     duration: { asc: "shortest to longest", desc: "longest to shortest" },
@@ -542,6 +556,9 @@
     .settings input[role="switch"]:disabled { cursor: default; }
     .settings label:has(input:disabled) { opacity: .5; }
     .settings p { margin: 4px 0; }
+    .settings .buttons { display: grid; grid-template-columns: max-content auto auto; align-items: center; gap: 2px 4px; justify-content: start; margin: 2px 0 4px; }
+    .settings .buttons label { margin: 0; }
+    .settings .buttons button { padding: 0 4px; }
     .settings input[type="range"] { width: 120px; margin: 0; accent-color: var(--yt-spec-call-to-action, #3ea6ff); }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
@@ -621,6 +638,14 @@
     };
     percentLabel.append("Watched at", percentInput, percentText);
     form.append(percentLabel);
+    const buttonsHeading = document.createElement("div");
+    buttonsHeading.id = "buttons-heading";
+    buttonsHeading.textContent = "Buttons";
+    const buttonList = document.createElement("div");
+    buttonList.className = "buttons";
+    buttonList.setAttribute("role", "group");
+    buttonList.setAttribute("aria-labelledby", "buttons-heading");
+    form.append(buttonsHeading, buttonList);
     const hint = document.createElement("p");
     form.append(hint);
     const confirmBar = document.createElement("div");
@@ -641,7 +666,12 @@
     save.hidden = true;
     const row = document.createElement("div");
     row.className = "row";
-    row.append(save, ...buttons.values(), removeWatched, removeAbove, gear);
+    const rowButtons = new Map([...buttons, ["watched", removeWatched], ["above", removeAbove]]);
+    row.append(save, ...rowButtons.values(), gear);
+    function orderRow() {
+      const order = [save, ...settings.buttons.map(({ key }) => rowButtons.get(key)), gear];
+      if (order.some((button, index) => row.children[index] !== button)) row.append(...order);
+    }
     root.append(style, row, confirmBar, status, form);
     for (const type of ["click", "keydown", "keyup", "keypress"]) {
       root.addEventListener(type, (event) => event.stopPropagation());
@@ -689,6 +719,7 @@
       keyInput.value = settings.apiKey;
       for (const input of [fetchBox, keyInput, dedupeBox, percentInput]) input.disabled = !available;
       updateKeyButtons();
+      renderButtonList();
       hint.hidden = available;
       hint.textContent = available ? "" : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
     }
@@ -704,21 +735,72 @@
       gear.setAttribute("aria-expanded", String(!form.hidden));
       if (!form.hidden) fillSettings();
     });
-    const store = (apiKey) => {
-      settings = {
-        apiKey,
-        fetch: apiKey !== "" && fetchBox.checked,
-        dedupe: dedupeBox.checked,
-        watchedPercent: Number(percentInput.value)
-      };
+    const commit = () => {
       try {
         saveSettings(settings);
       } catch (error) {
         report(error instanceof Error ? error.message : String(error), true);
       }
       updateKeyButtons();
+      renderButtonList();
       refreshControls();
     };
+    const store = (apiKey) => {
+      settings = {
+        ...settings,
+        apiKey,
+        fetch: apiKey !== "" && fetchBox.checked,
+        dedupe: dedupeBox.checked,
+        watchedPercent: Number(percentInput.value)
+      };
+      commit();
+    };
+    function renderButtonList() {
+      const available = storageAvailable();
+      const focused = root.activeElement?.dataset;
+      const focusKey = focused?.button;
+      const focusMove = focused?.move;
+      buttonList.replaceChildren();
+      settings.buttons.forEach(({ key, on }, index) => {
+        const label = document.createElement("label");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.setAttribute("role", "switch");
+        input.dataset.setting = `button-${key}`;
+        input.dataset.button = key;
+        input.checked = on;
+        const needsKey = fetched.has(key);
+        input.disabled = !available || needsKey && !canFetch();
+        if (needsKey) label.title = canFetch() ? `Show the ${buttonNames[key]} sort.` : "Needs Use API key.";
+        input.addEventListener("input", () => {
+          settings = { ...settings, buttons: settings.buttons.map((entry) => entry.key === key ? { key, on: input.checked } : entry) };
+          commit();
+        });
+        label.append(input, buttonNames[key]);
+        const mover = (move, text) => {
+          const button = makeButton(text);
+          button.dataset.move = move;
+          button.dataset.button = key;
+          button.setAttribute("aria-label", `Move ${buttonNames[key]} ${move}`);
+          button.title = button.getAttribute("aria-label");
+          const target = move === "up" ? index - 1 : index + 1;
+          button.disabled = !available || target < 0 || target >= settings.buttons.length;
+          button.addEventListener("click", () => {
+            const order = [...settings.buttons];
+            [order[index], order[target]] = [order[target], order[index]];
+            settings = { ...settings, buttons: order };
+            commit();
+          });
+          return button;
+        };
+        buttonList.append(label, mover("up", "\u2191"), mover("down", "\u2193"));
+      });
+      if (focusKey) {
+        const pick = (selector) => buttonList.querySelector(selector);
+        const target = focusMove ? pick(`[data-move="${focusMove}"][data-button="${focusKey}"]:enabled`) ?? pick(`[data-move][data-button="${focusKey}"]:enabled`) : pick(`input[data-button="${focusKey}"]`);
+        target?.focus();
+      }
+    }
     for (const input of [fetchBox, dedupeBox, percentInput]) input.addEventListener("input", () => store(settings.apiKey));
     percentInput.addEventListener("input", showPercent);
     keyInput.addEventListener("input", updateKeyButtons);
@@ -732,6 +814,8 @@
     });
     function describe() {
       syncSave();
+      orderRow();
+      const shown = (key) => settings.buttons.find((entry) => entry.key === key)?.on !== false;
       let snapshot;
       let problem = "";
       try {
@@ -748,7 +832,7 @@
         button.textContent = names[key] + (active ? cycle.phase === "asc" ? " \u2191" : cycle.phase === "desc" ? " \u2193" : " \u21B6" : "");
         button.setAttribute("aria-pressed", String(active));
         button.disabled = running !== null;
-        button.hidden = fetched.has(key) && !active && !canFetch();
+        button.hidden = !active && (!shown(key) || fetched.has(key) && !canFetch());
         const step = nextStep(cycle, key);
         const action = step === "undo" ? `Undo ${names[key].toLowerCase()} sorting; restore the order before this cycle.` : `Sort upcoming videos ${descriptions[key][step]}.`;
         button.setAttribute("aria-label", action);
@@ -765,6 +849,7 @@
         const count2 = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex, settings.watchedPercent).length : 0;
         removalLabel(removeWatched, "Watched");
         removeWatched.disabled = running !== null || count2 === 0;
+        removeWatched.hidden = !shown("watched");
         const action = count2 === 0 ? `No loaded videos ${watchedRule()}.` : `Remove ${plural(count2, "video")} that YouTube shows as watched (${watchedRule().replace(/^show /, "")}) from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
         removeWatched.setAttribute("aria-label", problem || action);
         removeWatched.title = problem || action;
@@ -773,6 +858,7 @@
         const count2 = snapshot ? aboveIds(snapshot.items, snapshot.currentIndex).length : 0;
         removalLabel(removeAbove, "Above");
         removeAbove.disabled = running !== null || count2 === 0;
+        removeAbove.hidden = !shown("above");
         const action = count2 === 0 ? "No loaded videos are above the current video." : `Remove the ${plural(count2, "video")} above the current video from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
         removeAbove.setAttribute("aria-label", problem || action);
         removeAbove.title = problem || action;

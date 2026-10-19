@@ -357,8 +357,10 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(await fetchToggle(), { checked: false, disabled: true }); // Clearing the key turns fetching off.
     assert.equal(await page.evaluate(() => window.gmStore.fetch), false);
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
-      .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent])),
-    [['fetch', 'Use API key'], ['dedupe', 'Dedupe on sort']]);
+      .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent, input.disabled])),
+    [['fetch', 'Use API key', true], ['dedupe', 'Dedupe on sort', false],
+      ['button-duration', 'Duration', false], ['button-title', 'Title', false], ['button-views', 'Views', true],
+      ['button-likes', 'Likes', true], ['button-uploaded', 'Date', true], ['button-watched', 'Watched', false], ['button-above', 'Above', false]]);
     // The key field comes first, then the toggle that uses it.
     assert.equal(await page.evaluate(() => {
       const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
@@ -378,6 +380,42 @@ for (const [browserName, executablePath] of [
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     assert.deepEqual(await percent(), { value: '50', text: '50%', stored: 50 });
+
+    // Each row button has a switch and can move up or down the list; the row follows.
+    await fixture(page, 'normal', {}, { settings: { apiKey: 'key-1', fetch: true } });
+    await press(page, '[data-action=settings]');
+    const rowOrder = () => page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelectorAll('.row > button:not(.save)')]
+      .filter(button => button.getClientRects().length).map(button => button.dataset.sort ?? button.dataset.action));
+    assert.deepEqual(await rowOrder(), ['duration', 'title', 'views', 'likes', 'uploaded', 'watched', 'above', 'settings']);
+    const movers = () => page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelectorAll('[data-move]')]
+      .filter(button => button.disabled).map(button => `${button.dataset.button}:${button.dataset.move}`));
+    assert.deepEqual(await movers(), ['duration:up', 'above:down']); // Only the ends are stuck.
+    await page.evaluate(() => {
+      const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
+      root.querySelector('[data-move=up][data-button=above]').focus();
+    });
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter'); // Focus follows the moved button.
+    assert.deepEqual(await rowOrder(), ['duration', 'title', 'views', 'likes', 'above', 'uploaded', 'watched', 'settings']);
+    assert.equal(await page.evaluate(() => {
+      const active = document.querySelector('yt-up-next-duration-sort').shadowRoot.activeElement;
+      return `${active?.dataset.button}:${active?.dataset.move}`;
+    }), 'above:up');
+    await press(page, '[data-move=down][data-button=duration]');
+    await press(page, '[data-setting=button-title]');
+    await press(page, '[data-setting=button-watched]');
+    assert.deepEqual(await rowOrder(), ['duration', 'views', 'likes', 'above', 'uploaded', 'settings']);
+    assert.deepEqual(await page.evaluate(() => window.gmStore.buttons), [
+      { key: 'title', on: false }, { key: 'duration', on: true }, { key: 'views', on: true }, { key: 'likes', on: true },
+      { key: 'above', on: true }, { key: 'uploaded', on: true }, { key: 'watched', on: false }]);
+    // Turning the API key off hides the fetched sorts and locks their switches as they were.
+    await press(page, '[data-setting=fetch]');
+    assert.deepEqual(await rowOrder(), ['duration', 'above', 'settings']);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelectorAll('[data-setting^=button-]')]
+      .filter(input => input.disabled).map(input => `${input.dataset.button}:${input.checked}`)), ['views:true', 'likes:true', 'uploaded:true']);
+    // The saved layout applies on the next load.
+    await fixture(page, 'normal', {}, { settings: { buttons: [{ key: 'above', on: true }, { key: 'duration', on: false }] } });
+    assert.deepEqual(await rowOrder(), ['above', 'title', 'watched', 'settings']);
 
     // Dedupe is on by default.
     await fixture(page, 'normal', {}, { freshStorage: true });
