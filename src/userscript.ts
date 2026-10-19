@@ -31,6 +31,8 @@ const canFetch = (): boolean => settings.fetch && settings.apiKey !== '';
 const unknown = (item: QueueItem, key: SortKey): boolean => key === 'duration' ? item.duration === null
   : key === 'title' ? !item.title : key === 'views' ? item.views == null
   : key === 'likes' ? item.likes == null : item.uploadedAt == null;
+const watchedRule = (): string => settings.watchedPercent === 0 ? 'show watch progress'
+  : `show at least ${settings.watchedPercent}% watched`;
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
 const ids = (snapshot: Snapshot): string[] => snapshot.items.map(item => item.id);
 function matchingCycle(snapshot: Snapshot): Cycle | undefined {
@@ -129,6 +131,7 @@ function mount(panel: HTMLElement): void {
     .settings input[role="switch"]:disabled { cursor: default; }
     .settings label:has(input:disabled) { opacity: .5; }
     .settings p { margin: 4px 0; }
+    .settings input[type="range"] { width: 120px; margin: 0; accent-color: var(--yt-spec-call-to-action, #3ea6ff); }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -193,6 +196,21 @@ function mount(panel: HTMLElement): void {
   fetchBox.parentElement!.title = 'Fetch views, likes and upload dates with this key.';
   const dedupeBox = toggle('dedupe', 'Dedupe on sort');
   dedupeBox.parentElement!.title = 'Remove repeated upcoming videos when sorting.';
+  const percentLabel = document.createElement('label');
+  percentLabel.className = 'percent';
+  percentLabel.title = 'How much of a video YouTube must show as seen for it to count as watched.';
+  const percentInput = document.createElement('input');
+  percentInput.type = 'range';
+  percentInput.min = '0';
+  percentInput.max = '100';
+  percentInput.step = '5';
+  percentInput.dataset.setting = 'watchedPercent';
+  const percentText = document.createElement('output');
+  const showPercent = (): void => {
+    percentText.textContent = percentInput.value === '0' ? 'any progress' : `${percentInput.value}%`;
+  };
+  percentLabel.append('Watched at', percentInput, percentText);
+  form.append(percentLabel);
   const hint = document.createElement('p');
   form.append(hint);
 
@@ -263,8 +281,10 @@ function mount(panel: HTMLElement): void {
     const available = storageAvailable();
     fetchBox.checked = settings.fetch;
     dedupeBox.checked = settings.dedupe;
+    percentInput.value = String(settings.watchedPercent);
+    showPercent();
     keyInput.value = settings.apiKey;
-    for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
+    for (const input of [fetchBox, keyInput, dedupeBox, percentInput]) input.disabled = !available;
     updateKeyButtons();
     hint.hidden = available;
     hint.textContent = available ? '' : 'Settings need the userscript manager’s storage permission. Reinstall the script to grant it.';
@@ -284,7 +304,8 @@ function mount(panel: HTMLElement): void {
     if (!form.hidden) fillSettings();
   });
   const store = (apiKey: string): void => {
-    settings = { apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked };
+    settings = { apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked,
+      watchedPercent: Number(percentInput.value) };
     try {
       saveSettings(settings);
     } catch (error) {
@@ -293,7 +314,8 @@ function mount(panel: HTMLElement): void {
     updateKeyButtons();
     refreshControls();
   };
-  for (const input of [fetchBox, dedupeBox]) input.addEventListener('input', () => store(settings.apiKey));
+  for (const input of [fetchBox, dedupeBox, percentInput]) input.addEventListener('input', () => store(settings.apiKey));
+  percentInput.addEventListener('input', showPercent);
   keyInput.addEventListener('input', updateKeyButtons);
   saveKey.addEventListener('click', () => { keyInput.value = keyInput.value.trim(); store(keyInput.value); });
   clearKey.addEventListener('click', () => { keyInput.value = ''; store(''); });
@@ -330,11 +352,11 @@ function mount(panel: HTMLElement): void {
       ].filter(Boolean).join(' ');
     }
     if (!removeWatched.dataset.running) {
-      const count = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex).length : 0;
+      const count = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex, settings.watchedPercent).length : 0;
       removalLabel(removeWatched, 'Watched');
       removeWatched.disabled = running !== null || count === 0;
-      const action = count === 0 ? 'No loaded videos show watch progress.'
-        : `Remove ${plural(count, 'video')} that YouTube shows as started from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
+      const action = count === 0 ? `No loaded videos ${watchedRule()}.`
+        : `Remove ${plural(count, 'video')} that YouTube shows as watched (${watchedRule().replace(/^show /, '')}) from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
       removeWatched.setAttribute('aria-label', problem || action);
       removeWatched.title = problem || action;
     }
@@ -475,8 +497,8 @@ function mount(panel: HTMLElement): void {
   removeWatched.addEventListener('click', () => run(removeWatched, 'Stop removing', async signal => {
     report('Reading the queue…');
     const snapshot = readSnapshot(panel);
-    const watched = watchedIds(snapshot.items, snapshot.currentIndex);
-    if (watched.length === 0) { report('No loaded videos show watch progress.', true); return; }
+    const watched = watchedIds(snapshot.items, snapshot.currentIndex, settings.watchedPercent);
+    if (watched.length === 0) { report(`No loaded videos ${watchedRule()}.`, true); return; }
     if (!(await remove(snapshot, watched, signal))) { report('Cancelled. Nothing was changed.'); return; }
     report(`Removed ${plural(watched.length, 'watched video')}.`);
   }));

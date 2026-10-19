@@ -58,6 +58,10 @@ test('any watch progress counts as watched, except on the current video', () => 
     { id: 'started', videoId: 'c', watched: 1 }, { id: 'unwatched', videoId: 'd', watched: 0 },
   ];
   assert.deepEqual(watchedIds(items, 1), ['past', 'started']);
+  // A threshold needs that much progress; no progress never counts.
+  assert.deepEqual(watchedIds(items, 1, 50), ['past']);
+  assert.deepEqual(watchedIds(items, 0, 40), ['current']);
+  assert.deepEqual(watchedIds(items, 1, 100), ['past']);
 });
 
 test('an already-sorted tail and a final current item stay unchanged', () => {

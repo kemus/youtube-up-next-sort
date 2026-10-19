@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.9.0
+// @version      0.10.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -17,6 +17,7 @@
 "use strict";
 (() => {
   // src/settings.ts
+  var percent = (value) => typeof value === "number" && Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : 0;
   function storageAvailable() {
     return typeof GM_getValue === "function" && typeof GM_setValue === "function";
   }
@@ -27,12 +28,13 @@
     if (storageAvailable()) GM_setValue(name, value);
   }
   function loadSettings() {
-    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false };
+    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0 };
     const apiKey = GM_getValue("apiKey", "");
     return {
       apiKey: typeof apiKey === "string" ? apiKey : "",
       fetch: GM_getValue("fetch", false) === true,
-      dedupe: GM_getValue("dedupe", true) === true
+      dedupe: GM_getValue("dedupe", true) === true,
+      watchedPercent: percent(GM_getValue("watchedPercent", 0))
     };
   }
   function saveSettings(settings2) {
@@ -40,6 +42,7 @@
     GM_setValue("apiKey", settings2.apiKey);
     GM_setValue("fetch", settings2.fetch);
     GM_setValue("dedupe", settings2.dedupe);
+    GM_setValue("watchedPercent", percent(settings2.watchedPercent));
   }
 
   // src/sort.ts
@@ -81,8 +84,11 @@
       return index > currentIndex ? [item.id] : [];
     });
   }
-  function watchedIds(items, currentIndex) {
-    return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
+  function watchedIds(items, currentIndex, percent2 = 0) {
+    return items.flatMap((item, index) => index !== currentIndex && isWatched(item, percent2) ? [item.id] : []);
+  }
+  function isWatched(item, percent2 = 0) {
+    return item.watched > 0 && item.watched >= percent2;
   }
   function aboveIds(items, currentIndex) {
     return items.slice(0, Math.max(currentIndex, 0)).map((item) => item.id);
@@ -230,8 +236,8 @@
   function watchedOf(data) {
     const overlays = Array.isArray(data.thumbnailOverlays) ? data.thumbnailOverlays : [];
     for (const overlay of overlays) {
-      const percent = record(record(overlay)?.thumbnailOverlayResumePlaybackRenderer)?.percentDurationWatched;
-      if (typeof percent === "number" && percent > 0) return percent;
+      const percent2 = record(record(overlay)?.thumbnailOverlayResumePlaybackRenderer)?.percentDurationWatched;
+      if (typeof percent2 === "number" && percent2 > 0) return percent2;
     }
     return 0;
   }
@@ -454,6 +460,7 @@
   var fetched = /* @__PURE__ */ new Set(["views", "likes", "uploaded"]);
   var canFetch = () => settings.fetch && settings.apiKey !== "";
   var unknown = (item, key) => key === "duration" ? item.duration === null : key === "title" ? !item.title : key === "views" ? item.views == null : key === "likes" ? item.likes == null : item.uploadedAt == null;
+  var watchedRule = () => settings.watchedPercent === 0 ? "show watch progress" : `show at least ${settings.watchedPercent}% watched`;
   var plural = (count2, noun) => `${count2} ${noun}${count2 === 1 ? "" : "s"}`;
   var ids2 = (snapshot) => snapshot.items.map((item) => item.id);
   function matchingCycle(snapshot) {
@@ -535,6 +542,7 @@
     .settings input[role="switch"]:disabled { cursor: default; }
     .settings label:has(input:disabled) { opacity: .5; }
     .settings p { margin: 4px 0; }
+    .settings input[type="range"] { width: 120px; margin: 0; accent-color: var(--yt-spec-call-to-action, #3ea6ff); }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -598,6 +606,21 @@
     fetchBox.parentElement.title = "Fetch views, likes and upload dates with this key.";
     const dedupeBox = toggle("dedupe", "Dedupe on sort");
     dedupeBox.parentElement.title = "Remove repeated upcoming videos when sorting.";
+    const percentLabel = document.createElement("label");
+    percentLabel.className = "percent";
+    percentLabel.title = "How much of a video YouTube must show as seen for it to count as watched.";
+    const percentInput = document.createElement("input");
+    percentInput.type = "range";
+    percentInput.min = "0";
+    percentInput.max = "100";
+    percentInput.step = "5";
+    percentInput.dataset.setting = "watchedPercent";
+    const percentText = document.createElement("output");
+    const showPercent = () => {
+      percentText.textContent = percentInput.value === "0" ? "any progress" : `${percentInput.value}%`;
+    };
+    percentLabel.append("Watched at", percentInput, percentText);
+    form.append(percentLabel);
     const hint = document.createElement("p");
     form.append(hint);
     const confirmBar = document.createElement("div");
@@ -661,8 +684,10 @@
       const available = storageAvailable();
       fetchBox.checked = settings.fetch;
       dedupeBox.checked = settings.dedupe;
+      percentInput.value = String(settings.watchedPercent);
+      showPercent();
       keyInput.value = settings.apiKey;
-      for (const input of [fetchBox, keyInput, dedupeBox]) input.disabled = !available;
+      for (const input of [fetchBox, keyInput, dedupeBox, percentInput]) input.disabled = !available;
       updateKeyButtons();
       hint.hidden = available;
       hint.textContent = available ? "" : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
@@ -680,7 +705,12 @@
       if (!form.hidden) fillSettings();
     });
     const store = (apiKey) => {
-      settings = { apiKey, fetch: apiKey !== "" && fetchBox.checked, dedupe: dedupeBox.checked };
+      settings = {
+        apiKey,
+        fetch: apiKey !== "" && fetchBox.checked,
+        dedupe: dedupeBox.checked,
+        watchedPercent: Number(percentInput.value)
+      };
       try {
         saveSettings(settings);
       } catch (error) {
@@ -689,7 +719,8 @@
       updateKeyButtons();
       refreshControls();
     };
-    for (const input of [fetchBox, dedupeBox]) input.addEventListener("input", () => store(settings.apiKey));
+    for (const input of [fetchBox, dedupeBox, percentInput]) input.addEventListener("input", () => store(settings.apiKey));
+    percentInput.addEventListener("input", showPercent);
     keyInput.addEventListener("input", updateKeyButtons);
     saveKey.addEventListener("click", () => {
       keyInput.value = keyInput.value.trim();
@@ -731,10 +762,10 @@
         ].filter(Boolean).join(" ");
       }
       if (!removeWatched.dataset.running) {
-        const count2 = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex).length : 0;
+        const count2 = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex, settings.watchedPercent).length : 0;
         removalLabel(removeWatched, "Watched");
         removeWatched.disabled = running !== null || count2 === 0;
-        const action = count2 === 0 ? "No loaded videos show watch progress." : `Remove ${plural(count2, "video")} that YouTube shows as started from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
+        const action = count2 === 0 ? `No loaded videos ${watchedRule()}.` : `Remove ${plural(count2, "video")} that YouTube shows as watched (${watchedRule().replace(/^show /, "")}) from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
         removeWatched.setAttribute("aria-label", problem || action);
         removeWatched.title = problem || action;
       }
@@ -882,9 +913,9 @@
     removeWatched.addEventListener("click", () => run(removeWatched, "Stop removing", async (signal) => {
       report("Reading the queue\u2026");
       const snapshot = readSnapshot(panel);
-      const watched = watchedIds(snapshot.items, snapshot.currentIndex);
+      const watched = watchedIds(snapshot.items, snapshot.currentIndex, settings.watchedPercent);
       if (watched.length === 0) {
-        report("No loaded videos show watch progress.", true);
+        report(`No loaded videos ${watchedRule()}.`, true);
         return;
       }
       if (!await remove(snapshot, watched, signal)) {

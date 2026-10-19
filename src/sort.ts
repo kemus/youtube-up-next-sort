@@ -66,9 +66,15 @@ export function duplicateIds(items: readonly Occurrence[], currentIndex: number)
   });
 }
 
-/** Every occurrence with any recorded watch progress, except the current one. */
-export function watchedIds(items: readonly Occurrence[], currentIndex: number): string[] {
-  return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
+/**
+ * Every occurrence watched at least `percent` (any progress at 0), except the current one.
+ */
+export function watchedIds(items: readonly Occurrence[], currentIndex: number, percent = 0): string[] {
+  return items.flatMap((item, index) => index !== currentIndex && isWatched(item, percent) ? [item.id] : []);
+}
+
+export function isWatched(item: Occurrence, percent = 0): boolean {
+  return item.watched > 0 && item.watched >= percent;
 }
 
 /** Every occurrence above the current one. */

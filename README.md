@@ -73,6 +73,9 @@ is saved.
   **Views**, **Likes**, and **Date** appear only when this is on.
 - **Dedupe on sort**: remove repeated videos when sorting. On by default, unless the
   manager grants no storage.
+- **Watched at**: how much of a video, from 0 to 100% in 5% steps, YouTube must
+  show as seen for it to count as watched. At 0%, the default, any progress
+  counts; a video with no progress never counts.
 
 ### Views, Likes, and Date
 
@@ -95,7 +98,8 @@ can differ from the upload time.
 
 **Remove watched** removes every loaded video that YouTube shows with watch
 progress, before or after the current video; the current video stays. Any
-progress above zero counts. YouTube's figure can lag behind what you watched, so
+progress above zero counts, or at least the **Watched at** share when that is
+set. YouTube's figure can lag behind what you watched, so
 a video you finished may still show as unwatched or partly watched.
 
 **Above** removes every loaded video above the current one; the current video

@@ -366,6 +366,18 @@ for (const [browserName, executablePath] of [
       return top('[data-setting=fetch]') > top('[data-setting=apiKey]');
     }), true);
     assert.equal(await shown(page, '.settings p'), false); // No explanatory text while settings work.
+    // The watched threshold slider starts at any progress and saves as it moves.
+    const percent = () => page.evaluate(() => {
+      const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
+      return { value: root.querySelector('[data-setting=watchedPercent]').value, text: root.querySelector('.percent output').textContent, stored: window.gmStore.watchedPercent };
+    });
+    assert.deepEqual(await percent(), { value: '0', text: 'any progress', stored: 0 });
+    await page.evaluate(() => {
+      const input = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=watchedPercent]');
+      input.value = '50';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    assert.deepEqual(await percent(), { value: '50', text: '50%', stored: 50 });
 
     // Dedupe is on by default.
     await fixture(page, 'normal', {}, { freshStorage: true });
@@ -446,6 +458,12 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(actual.order, ['current', 'short', 'tie', 'live', 'unknown', 'minute']);
     assert.equal(actual.current, 0);
     assert.match(actual.status, /^Removed 2 watched videos/);
+    // With a threshold, only videos watched at least that much go.
+    await fixture(page, 'normal', {}, { watched: { past: 100, current: 50, long: 10, short: 50 }, settings: { watchedPercent: 50 } });
+    await press(page, '[data-action=watched]'); await idle(page);
+    assert.deepEqual((await result(page)).removed, ['past', 'short']);
+    await fixture(page, 'normal', {}, { watched: { long: 10 }, settings: { watchedPercent: 50 } });
+    assert.equal(await shown(page, '[data-action=watched]'), false);
     await fixture(page, 'normal', {}, { watched: { long: 10 }, noGlyphFont: true });
     assert.deepEqual(await watchedLabel(), { text: 'Remove watched', font: null, hidden: null });
     assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=above]').textContent), 'Remove above');
@@ -512,7 +530,7 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), true);
     await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['past']);
-    console.log(`${browserName}: 32 browser fixture scenarios passed`);
+    console.log(`${browserName}: 34 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }
