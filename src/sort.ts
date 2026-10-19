@@ -24,17 +24,26 @@ export function parseDuration(text: string): number | null {
 export function sortUpcoming<T extends Item>(
   items: readonly T[], currentIndex: number, key: SortKey = 'duration', direction: Direction = 'asc',
 ): T[] {
+  checkItems(items, currentIndex);
+  return [...items.slice(0, currentIndex + 1), ...sortItems(items.slice(currentIndex + 1), key, direction)];
+}
+
+function checkItems(items: readonly Item[], currentIndex: number): void {
   if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= items.length) {
     throw new Error('Cannot identify the currently playing item.');
   }
   if (new Set(items.map(item => item.id)).size !== items.length) {
     throw new Error('YouTube did not provide unique queue item identifiers.');
   }
-  const upcoming = items.slice(currentIndex + 1).map((item, index) => ({ item, index }));
+}
+
+/** Sort by one key; missing values go last, and ties keep their given order. */
+function sortItems<T extends Item>(items: readonly T[], key: SortKey, direction: Direction): T[] {
+  const entries = items.map((item, index) => ({ item, index }));
   const value = (item: Item): number | string | null => key === 'title' ? item.title?.trim() || null
     : key === 'views' ? item.views ?? null : key === 'likes' ? item.likes ?? null
     : key === 'uploaded' ? item.uploadedAt ?? null : item.duration;
-  upcoming.sort((a, b) => {
+  entries.sort((a, b) => {
     const left = value(a.item);
     const right = value(b.item);
     // Missing values stay last in both directions; equal values retain their
@@ -44,7 +53,30 @@ export function sortUpcoming<T extends Item>(
       ? titleOrder.compare(left, right) : left < right ? -1 : left > right ? 1 : 0;
     return comparison * (direction === 'asc' ? 1 : -1) || a.index - b.index;
   });
-  return [...items.slice(0, currentIndex + 1), ...upcoming.map(entry => entry.item)];
+  return entries.map(entry => entry.item);
+}
+
+export interface ArrangeOptions {
+  /** Sort the current video with the upcoming ones. */
+  includeCurrent?: boolean;
+}
+
+/**
+ * Split the queue into the entries that keep their place at the top, in
+ * order, and the pool a sort reorders below them.
+ */
+export function partition<T extends Item>(items: readonly T[], currentIndex: number, options: ArrangeOptions = {}): { top: T[]; pool: T[] } {
+  checkItems(items, currentIndex);
+  const start = options.includeCurrent ? currentIndex : currentIndex + 1;
+  return { top: items.slice(0, start), pool: items.slice(start) };
+}
+
+/** The whole queue after sorting its pool; see partition. */
+export function arrange<T extends Item>(
+  items: readonly T[], currentIndex: number, key: SortKey, direction: Direction, options: ArrangeOptions = {},
+): T[] {
+  const { top, pool } = partition(items, currentIndex, options);
+  return [...top, ...sortItems(pool, key, direction)];
 }
 
 export interface Occurrence {
@@ -84,8 +116,8 @@ export function aboveIds(items: readonly Occurrence[], currentIndex: number): st
 
 export interface Move {
   id: string;
-  /** The entry the moved one is dropped directly after. */
-  after: string;
+  /** The entry the moved one is dropped directly after; null for the top. */
+  after: string | null;
 }
 
 /**
@@ -113,7 +145,7 @@ export function planMoves(current: readonly string[], target: readonly string[],
   });
   const kept = new Set<string>();
   for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]!) kept.add(upcoming[index]!);
-  return target.slice(fixed).flatMap((id, offset) => kept.has(id) ? [] : [{ id, after: target[fixed + offset - 1]! }]);
+  return target.slice(fixed).flatMap((id, offset) => kept.has(id) ? [] : [{ id, after: target[fixed + offset - 1] ?? null }]);
 }
 
 export function sameOrder(left: readonly string[], right: readonly string[]): boolean {

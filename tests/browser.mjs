@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import puppeteer from 'puppeteer-core';
 
 const source = await readFile(new URL('../dist/playlist-sort.user.js', import.meta.url), 'utf8');
@@ -7,12 +8,20 @@ const expected = ['past', 'current', 'short', 'tie', 'minute', 'long', 'live', '
 const original = ['past', 'current', 'long', 'short', 'tie', 'live', 'unknown', 'minute'];
 const descending = ['past', 'current', 'long', 'minute', 'short', 'tie', 'live', 'unknown'];
 
+// An empty page on a real origin, so fixtures can change the address bar like YouTube does.
+const server = createServer((request, response) => {
+  response.writeHead(200, { 'content-type': 'text/html' }).end('<!doctype html><title>fixture</title>');
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const blank = `http://127.0.0.1:${server.address().port}/`;
+
 // options: settings (manager storage contents; dedupe is off unless set or freshStorage),
 // freshStorage (empty storage, for defaults), noStorage, watched ({ id: percent }),
 // api ('quota' for a quota error), removeMode ('noop' for an ignored removal, 'late' for one applied
-// after 200 ms), removeVia ('command' when YouTube's menu item is unavailable).
+// after 200 ms), removeVia ('command' when YouTube's menu item is unavailable), play ('ignore' for row
+// links that start nothing).
 async function fixture(page, mode = 'normal', extra = {}, options = {}) {
-  await page.goto('about:blank');
+  await page.goto(blank);
   // Each fixture needs a fresh page, without an earlier copy of the userscript.
   assert.equal(await page.evaluate(() => typeof window.fixture), 'undefined');
   await page.evaluate((mode, extra, options) => {
@@ -80,6 +89,12 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       document.head.append(csp);
     }
     const playlistId = extra.playlistId ?? 'TLPQ-fixture';
+    // Like YouTube, playing a row in place moves currentIndex and the address
+    // bar but can leave every selected flag on the old position.
+    let playing = null;
+    const playingIndex = () => data.contents.findIndex(entry => playing
+      ? entry.playlistPanelVideoRenderer.playlistSetVideoId === playing
+      : entry.playlistPanelVideoRenderer.selected);
     const entries = [
       ['past', '9:00'], ['current', '10:00'], ['long', '4:00'],
       ['short', '0:15'], ['tie', '0:15'], ['live', 'LIVE'], ['unknown', ''], ['minute', '1:00'],
@@ -95,7 +110,7 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       ] } },
     } }));
     const data = { contents: entries, playlistId, currentIndex: 1, totalVideos: entries.length, ...extra };
-    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], edits: [], commands: 0, requests: [], apiKeys: [], playerNext: 'long', data };
+    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], edits: [], commands: 0, requests: [], apiKeys: [], playerNext: 'long', plays: [], data };
     document.addEventListener('keydown', () => state.keys++);
     // Stands in for YouTube running a playlist edit, with every action it carries.
     const runEdit = endpoint => {
@@ -126,7 +141,22 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       panel.querySelector('#items').replaceChildren(...data.contents.map(entry => {
         const row = document.createElement('ytd-playlist-panel-video-renderer');
         row.data = entry.playlistPanelVideoRenderer;
-        row.textContent = row.data.playlistSetVideoId;
+        // The row's link plays it in place, starting with YouTube's navigation event.
+        const link = document.createElement('a');
+        link.id = 'wc-endpoint';
+        link.href = '#';
+        link.textContent = row.data.playlistSetVideoId;
+        link.addEventListener('click', event => {
+          event.preventDefault();
+          if (options.play === 'ignore') return;
+          state.plays.push(row.data.playlistSetVideoId);
+          document.dispatchEvent(new Event('yt-navigate-start'));
+          playing = row.data.playlistSetVideoId;
+          history.replaceState(null, '', `?v=${row.data.videoId}`);
+          data.currentIndex = playingIndex();
+          setTimeout(render, 30);
+        });
+        row.append(link);
         if (row.data.selected) row.setAttribute('selected', '');
         return row;
       }));
@@ -144,6 +174,7 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
           setTimeout(() => {
             const original = data.contents.findIndex(entry => entry.playlistPanelVideoRenderer.playlistSetVideoId === token);
             data.contents.splice(destination, 0, data.contents.splice(original, 1)[0]);
+            data.currentIndex = playingIndex();
             state.moves++;
             render();
           }, 60);
@@ -152,6 +183,8 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
         const original = data.contents.findIndex(entry => entry.playlistPanelVideoRenderer.playlistSetVideoId === token);
         const moved = data.contents.splice(original, 1)[0];
         data.contents.splice(destination, 0, moved);
+        // YouTube keeps the current index on the playing video as rows move.
+        data.currentIndex = playingIndex();
         state.moves++;
         if (mode === 'concurrent') data.contents.push({ playlistPanelVideoRenderer: { playlistSetVideoId: 'new', lengthText: { simpleText: '0:01' } } });
         if (mode === 'advance') {
@@ -224,6 +257,33 @@ for (const [browserName, executablePath] of [
     assert.deepEqual((await result(page)).order, descending);
     await click(page); await settled(page);
     assert.deepEqual((await result(page)).order, original);
+
+    // With the current video in the sort, the first sorted video plays through its row,
+    // and the cycle continues from the order it started with.
+    await fixture(page, 'normal', {}, { settings: { includeCurrent: true } });
+    assert.match((await result(page)).detail, /current video is sorted too/);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['past', 'short', 'tie', 'minute', 'long', 'current', 'live', 'unknown']);
+    assert.deepEqual(actual.visible, actual.order);
+    assert.equal(actual.current, 1);
+    assert.deepEqual(await page.evaluate(() => window.fixture.plays), ['short']);
+    assert.match(actual.status, /^Sorted loaded videos shortest to longest .*Playing the first sorted video/);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, descending);
+    assert.equal(actual.order[actual.current], 'current');
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, original);
+    assert.match(actual.status, /^Restored/);
+    assert.deepEqual(await page.evaluate(() => window.fixture.plays), ['short', 'current']); // Undo plays nothing.
+    // A row link that starts nothing leaves the sorted order and says so.
+    await fixture(page, 'normal', {}, { settings: { includeCurrent: true }, play: 'ignore' });
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['past', 'short', 'tie', 'minute', 'long', 'current', 'live', 'unknown']);
+    assert.match(actual.status, /did not start the first sorted video/);
 
     for (const mode of ['throw', 'noop']) {
       await fixture(page, mode); await click(page); await settled(page);
@@ -359,6 +419,7 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
       .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent, input.disabled])),
     [['fetch', 'Use API key', true], ['dedupe', 'Dedupe on sort', false],
+      ['includeCurrent', 'Include current video in sorting, and swap to first sorted video', false],
       ['button-duration', 'Duration', false], ['button-title', 'Title', false], ['button-views', 'Views', true],
       ['button-likes', 'Likes', true], ['button-uploaded', 'Date', true], ['button-watched', 'Watched', false], ['button-above', 'Above', false]]);
     // The key field comes first, then the toggle that uses it.
@@ -573,3 +634,4 @@ for (const [browserName, executablePath] of [
     await browser.close();
   }
 }
+server.close();

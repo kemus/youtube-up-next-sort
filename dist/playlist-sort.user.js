@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.11.0
+// @version      0.12.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -39,14 +39,15 @@
     if (storageAvailable()) GM_setValue(name, value);
   }
   function loadSettings() {
-    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]) };
+    if (!storageAvailable()) return { apiKey: "", fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]), includeCurrent: false };
     const apiKey = GM_getValue("apiKey", "");
     return {
       apiKey: typeof apiKey === "string" ? apiKey : "",
       fetch: GM_getValue("fetch", false) === true,
       dedupe: GM_getValue("dedupe", true) === true,
       watchedPercent: percent(GM_getValue("watchedPercent", 0)),
-      buttons: normalizeButtons(GM_getValue("buttons", []))
+      buttons: normalizeButtons(GM_getValue("buttons", [])),
+      includeCurrent: GM_getValue("includeCurrent", false) === true
     };
   }
   function saveSettings(settings2) {
@@ -56,6 +57,7 @@
     GM_setValue("dedupe", settings2.dedupe);
     GM_setValue("watchedPercent", percent(settings2.watchedPercent));
     GM_setValue("buttons", normalizeButtons(settings2.buttons).map(({ key, on }) => ({ key, on })));
+    GM_setValue("includeCurrent", settings2.includeCurrent);
   }
 
   // src/sort.ts
@@ -68,23 +70,34 @@
     const seconds = parts.reduce((total, part) => total * 60 + part, 0);
     return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
   }
-  function sortUpcoming(items, currentIndex, key = "duration", direction = "asc") {
+  function checkItems(items, currentIndex) {
     if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= items.length) {
       throw new Error("Cannot identify the currently playing item.");
     }
     if (new Set(items.map((item) => item.id)).size !== items.length) {
       throw new Error("YouTube did not provide unique queue item identifiers.");
     }
-    const upcoming = items.slice(currentIndex + 1).map((item, index) => ({ item, index }));
+  }
+  function sortItems(items, key, direction) {
+    const entries = items.map((item, index) => ({ item, index }));
     const value = (item) => key === "title" ? item.title?.trim() || null : key === "views" ? item.views ?? null : key === "likes" ? item.likes ?? null : key === "uploaded" ? item.uploadedAt ?? null : item.duration;
-    upcoming.sort((a, b) => {
+    entries.sort((a, b) => {
       const left = value(a.item);
       const right = value(b.item);
       if (left === null || right === null) return left === right ? a.index - b.index : left === null ? 1 : -1;
       const comparison = typeof left === "string" && typeof right === "string" ? titleOrder.compare(left, right) : left < right ? -1 : left > right ? 1 : 0;
       return comparison * (direction === "asc" ? 1 : -1) || a.index - b.index;
     });
-    return [...items.slice(0, currentIndex + 1), ...upcoming.map((entry) => entry.item)];
+    return entries.map((entry) => entry.item);
+  }
+  function partition(items, currentIndex, options = {}) {
+    checkItems(items, currentIndex);
+    const start = options.includeCurrent ? currentIndex : currentIndex + 1;
+    return { top: items.slice(0, start), pool: items.slice(start) };
+  }
+  function arrange(items, currentIndex, key, direction, options = {}) {
+    const { top, pool } = partition(items, currentIndex, options);
+    return [...top, ...sortItems(pool, key, direction)];
   }
   function duplicateIds(items, currentIndex) {
     const seen = /* @__PURE__ */ new Set();
@@ -125,7 +138,7 @@
     });
     const kept = /* @__PURE__ */ new Set();
     for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]) kept.add(upcoming[index]);
-    return target.slice(fixed).flatMap((id, offset) => kept.has(id) ? [] : [{ id, after: target[fixed + offset - 1] }]);
+    return target.slice(fixed).flatMap((id, offset) => kept.has(id) ? [] : [{ id, after: target[fixed + offset - 1] ?? null }]);
   }
   function sameOrder(left, right) {
     return left.length === right.length && left.every((id, index) => id === right[index]);
@@ -275,11 +288,11 @@
     if (rows.length === 0 || entries.length !== rows.length) {
       throw new Error("Wait for the loaded queue items to finish rendering, then try again.");
     }
-    if (rows.some((row, index) => container.childNodes[index] !== row)) {
+    if (rows.some((row, index2) => container.childNodes[index2] !== row)) {
       throw new Error("Unsupported queue layout: video rows are not contiguous.");
     }
-    const items = entries.map((entry, index) => {
-      const row = rows[index];
+    const items = entries.map((entry, index2) => {
+      const row = rows[index2];
       const rowData = row.data;
       const id = entry.playlistSetVideoId;
       if (typeof id !== "string" || !id || rowData?.playlistSetVideoId !== id) {
@@ -296,12 +309,16 @@
     if (new Set(items.map((item) => item.id)).size !== items.length) {
       throw new Error("Queue occurrence identifiers are missing or duplicated.");
     }
-    const selected = entries.flatMap((entry, index) => entry.selected === true ? [index] : []);
-    if (selected.length !== 1 || data.currentIndex !== selected[0]) {
+    const selected = entries.flatMap((entry, index2) => entry.selected === true ? [index2] : []);
+    const playing = new URLSearchParams(location.search).get("v");
+    const index = typeof data.currentIndex === "number" ? data.currentIndex : -1;
+    const flagged = selected.length === 1 && selected[0] === index;
+    const named = !!playing && items[index]?.videoId === playing;
+    if (!flagged && !named) {
       throw new Error("Cannot locate the current video in the loaded queue. Try a short, fully loaded queue.");
     }
     const total = typeof data.totalVideos === "number" ? data.totalVideos : null;
-    return { items, entries, currentIndex: selected[0], playlistId, total, container, rows, controller };
+    return { items, entries, currentIndex: index, playlistId, total, container, rows, controller };
   }
   var ids = (snapshot) => snapshot.items.map((item) => item.id);
   var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -309,18 +326,21 @@
     requestAnimationFrame(() => resolve());
     setTimeout(resolve, 50);
   });
+  var currentId = (snapshot) => snapshot.items[snapshot.currentIndex]?.id;
   function checkSession(snapshot, initial) {
-    if (snapshot.playlistId !== initial.playlistId || snapshot.currentIndex !== initial.currentIndex || snapshot.items[snapshot.currentIndex]?.id !== initial.items[initial.currentIndex]?.id) {
+    if (snapshot.playlistId !== initial.playlistId || currentId(snapshot) !== currentId(initial)) {
       throw new Error("Playback or the queue changed. Sorting stopped; completed moves remain applied.");
     }
   }
   async function reorderPanel(panel, initial, target, signal, report) {
     const original = ids(initial);
-    if (target.length !== original.length || new Set(target).size !== target.length || target.some((id) => !original.includes(id)) || !sameOrder(target.slice(0, initial.currentIndex + 1), original.slice(0, initial.currentIndex + 1))) {
+    if (target.length !== original.length || new Set(target).size !== target.length || target.some((id) => !original.includes(id))) {
       throw new Error("The requested order no longer matches this queue.");
     }
     let expected = ids(initial);
-    const plan = planMoves(expected, target, initial.currentIndex + 1);
+    let fixed = 0;
+    while (fixed < target.length && target[fixed] === expected[fixed]) fixed++;
+    const plan = planMoves(expected, target, fixed);
     let moves = 0;
     for (const { id, after: anchor } of plan) {
       signal.throwIfAborted();
@@ -330,12 +350,11 @@
         throw new Error("The queue changed while sorting. Completed moves remain applied; try again.");
       }
       const row = before.rows[expected.indexOf(id)];
-      const anchorRow = before.rows[expected.indexOf(anchor)];
       const oldNext = row.nextSibling;
       const nextOrder = expected.filter((other) => other !== id);
-      nextOrder.splice(nextOrder.indexOf(anchor) + 1, 0, id);
+      nextOrder.splice(anchor === null ? 0 : nextOrder.indexOf(anchor) + 1, 0, id);
       const reorder = before.controller.ytReorderableController;
-      before.container.insertBefore(row, anchorRow.nextSibling);
+      before.container.insertBefore(row, anchor === null ? before.rows[0] : before.rows[expected.indexOf(anchor)].nextSibling);
       try {
         reorder.handleDrop({ currDragItem: row });
       } catch (error) {
@@ -381,6 +400,25 @@
     checkSession(final, initial);
     if (!sameOrder(ids(final), target)) throw new Error("YouTube changed the order before verification finished. Try again.");
     return moves;
+  }
+  async function playItem(panel, initial, id, signal) {
+    const index = ids(initial).indexOf(id);
+    const link = initial.rows[index]?.querySelector("a#wc-endpoint");
+    if (!link) throw new Error("YouTube offers no link to play the first sorted video. The new order stays.");
+    link.click();
+    const deadline = Date.now() + 5e3;
+    for (; ; ) {
+      signal.throwIfAborted();
+      try {
+        const snapshot = readSnapshot(panel);
+        if (snapshot.playlistId !== initial.playlistId) throw new Error("The queue changed before the first sorted video started.");
+        if (currentId(snapshot) === id) return snapshot;
+      } catch (error) {
+        if (Date.now() >= deadline) throw error;
+      }
+      if (Date.now() >= deadline) throw new Error("YouTube did not start the first sorted video. The new order stays.");
+      await delay(50);
+    }
   }
   function removeMenuItem(entry, id, playlistId) {
     const items = record(record(entry.menu)?.menuRenderer)?.items;
@@ -458,6 +496,7 @@
   // src/userscript.ts
   var HOST_TAG = "yt-up-next-duration-sort";
   var running = null;
+  var switching = false;
   var settings = loadSettings();
   var cycles = /* @__PURE__ */ new Map();
   var controls = /* @__PURE__ */ new Map();
@@ -479,7 +518,7 @@
   var ids2 = (snapshot) => snapshot.items.map((item) => item.id);
   function matchingCycle(snapshot) {
     const cycle = cycles.get(snapshot.playlistId);
-    return cycle && cycle.currentIndex === snapshot.currentIndex && cycle.currentId === snapshot.items[snapshot.currentIndex]?.id && sameOrder(cycle.expected, ids2(snapshot)) ? cycle : void 0;
+    return cycle && cycle.currentId === snapshot.items[snapshot.currentIndex]?.id && sameOrder(cycle.expected, ids2(snapshot)) ? cycle : void 0;
   }
   function nextStep(cycle, key) {
     return cycle?.key !== key ? "asc" : cycle.phase === "asc" ? "desc" : "undo";
@@ -623,6 +662,8 @@
     fetchBox.parentElement.title = "Fetch views, likes and upload dates with this key.";
     const dedupeBox = toggle("dedupe", "Dedupe on sort");
     dedupeBox.parentElement.title = "Remove repeated upcoming videos when sorting.";
+    const currentBox = toggle("includeCurrent", "Include current video in sorting, and swap to first sorted video");
+    currentBox.parentElement.title = "Sort the playing video with the upcoming ones, then play whichever video sorts first.";
     const percentLabel = document.createElement("label");
     percentLabel.className = "percent";
     percentLabel.title = "How much of a video YouTube must show as seen for it to count as watched.";
@@ -714,10 +755,11 @@
       const available = storageAvailable();
       fetchBox.checked = settings.fetch;
       dedupeBox.checked = settings.dedupe;
+      currentBox.checked = settings.includeCurrent;
       percentInput.value = String(settings.watchedPercent);
       showPercent();
       keyInput.value = settings.apiKey;
-      for (const input of [fetchBox, keyInput, dedupeBox, percentInput]) input.disabled = !available;
+      for (const input of [fetchBox, keyInput, dedupeBox, currentBox, percentInput]) input.disabled = !available;
       updateKeyButtons();
       renderButtonList();
       hint.hidden = available;
@@ -751,7 +793,8 @@
         apiKey,
         fetch: apiKey !== "" && fetchBox.checked,
         dedupe: dedupeBox.checked,
-        watchedPercent: Number(percentInput.value)
+        watchedPercent: Number(percentInput.value),
+        includeCurrent: currentBox.checked
       };
       commit();
     };
@@ -801,7 +844,7 @@
         target?.focus();
       }
     }
-    for (const input of [fetchBox, dedupeBox, percentInput]) input.addEventListener("input", () => store(settings.apiKey));
+    for (const input of [fetchBox, dedupeBox, currentBox, percentInput]) input.addEventListener("input", () => store(settings.apiKey));
     percentInput.addEventListener("input", showPercent);
     keyInput.addEventListener("input", updateKeyButtons);
     saveKey.addEventListener("click", () => {
@@ -839,7 +882,7 @@
         const scope = snapshot?.total !== null && snapshot?.total !== void 0 && snapshot.total > snapshot.items.length ? `Loaded ${snapshot.items.length} of ${snapshot.total}; only loaded upcoming videos are sorted.` : `${upcoming.length} upcoming loaded videos.`;
         button.title = problem || [
           action,
-          "Current video stays fixed.",
+          settings.includeCurrent ? "The current video is sorted too, and the first sorted video plays." : "Current video stays fixed.",
           scope,
           saved ? "Native playlist moves can also change the saved playlist order." : "",
           settings.dedupe && step !== "undo" ? "Repeated upcoming videos are removed first." : ""
@@ -924,6 +967,7 @@
         const existing = matchingCycle(snapshot);
         const step = nextStep(existing, key);
         let baseline = existing?.key === key ? existing.baseline : ids2(snapshot);
+        const start = existing?.key === key ? existing.start : snapshot.items[snapshot.currentIndex].id;
         const repeats = step !== "undo" && settings.dedupe ? duplicateIds(snapshot.items, snapshot.currentIndex) : [];
         let removedCount = 0;
         if (repeats.length > 0) {
@@ -939,46 +983,51 @@
         }
         const removedNote = removedCount > 0 ? `Removed ${plural(removedCount, "repeated video")}. ` : "";
         let items = snapshot.items;
-        const upcomingIds = new Set(ids2(snapshot).slice(snapshot.currentIndex + 1));
-        if (upcomingIds.size < 2) {
+        const options = { includeCurrent: settings.includeCurrent };
+        const poolIds = new Set(partition(items, snapshot.currentIndex, options).pool.map((item) => item.id));
+        if (step !== "undo" && poolIds.size < 2) {
           report(`${removedNote}Load at least two upcoming videos to sort.`, true);
           return;
         }
         if (step !== "undo" && fetched.has(key)) {
           if (!canFetch()) throw new Error("Save an API key and turn on Use API key in the sort settings.");
           report("Fetching video details\u2026");
-          const stats = await fetchStats(items.filter((item) => upcomingIds.has(item.id)).map((item) => item.videoId), settings.apiKey, signal);
+          const stats = await fetchStats(items.filter((item) => poolIds.has(item.id)).map((item) => item.videoId), settings.apiKey, signal);
           items = items.map((item) => ({ ...item, ...stats.get(item.videoId) }));
         }
-        if (step !== "undo" && items.every((item) => !upcomingIds.has(item.id) || unknown(item, key))) {
-          report(`${removedNote}No ${plurals[key]} are available for the upcoming videos.`, true);
+        if (step !== "undo" && items.every((item) => !poolIds.has(item.id) || unknown(item, key))) {
+          report(`${removedNote}No ${plurals[key]} are available for the videos to sort.`, true);
           return;
         }
         const byId = new Map(items.map((item) => [item.id, item]));
-        const target = step === "undo" ? baseline : sortUpcoming(
-          baseline.map((id) => byId.get(id)),
-          snapshot.currentIndex,
-          key,
-          step
-        ).map((item) => item.id);
-        const cycle = {
-          key,
-          phase: "partial",
-          baseline,
-          expected: ids2(snapshot),
-          currentIndex: snapshot.currentIndex,
-          currentId: snapshot.items[snapshot.currentIndex].id
-        };
+        const base = baseline.map((id) => byId.get(id));
+        const currentId2 = snapshot.items[snapshot.currentIndex].id;
+        const baseIndex = baseline.indexOf(start);
+        const target = step === "undo" ? baseline : arrange(base, baseIndex, key, step, options).map((item) => item.id);
+        const cycle = { key, phase: "partial", baseline, expected: ids2(snapshot), currentId: currentId2, start };
         cycles.set(snapshot.playlistId, cycle);
         attempted = { playlistId: snapshot.playlistId, cycle };
         const moves = await reorderPanel(panel, snapshot, target, signal, report);
+        cycle.expected = target;
+        const first = step !== "undo" && options.includeCurrent ? target[partition(base, baseIndex, options).top.length] : void 0;
+        let playNote = "";
+        if (first !== void 0 && first !== currentId2) {
+          report("Playing the first sorted video\u2026");
+          switching = true;
+          try {
+            await playItem(panel, readSnapshot(panel), first, signal);
+          } finally {
+            switching = false;
+          }
+          cycle.currentId = first;
+          playNote = " Playing the first sorted video.";
+        }
         if (step === "undo") {
           cycles.delete(snapshot.playlistId);
           report("Restored the order from before this sort cycle.");
         } else {
           cycle.phase = step;
-          cycle.expected = target;
-          report(`Sorted loaded upcoming videos ${descriptions[key][step]} (${moves} native moves). ${removedNote}`.trim());
+          report(`Sorted loaded ${options.includeCurrent ? "videos" : "upcoming videos"} ${descriptions[key][step]} (${moves} native moves).${playNote} ${removedNote}`.trim());
         }
       } catch (error) {
         if (attempted) {
@@ -986,8 +1035,9 @@
             const after = readSnapshot(panel);
             const { cycle } = attempted;
             const order = ids2(after);
-            if (after.playlistId === attempted.playlistId && after.currentIndex === cycle.currentIndex && order.length === cycle.baseline.length && order.every((id) => cycle.baseline.includes(id)) && sameOrder(order.slice(0, after.currentIndex + 1), cycle.baseline.slice(0, after.currentIndex + 1))) {
+            if (after.playlistId === attempted.playlistId && order.length === cycle.baseline.length && order.every((id) => cycle.baseline.includes(id))) {
               cycle.expected = order;
+              cycle.currentId = order[after.currentIndex];
             } else cycles.delete(attempted.playlistId);
           } catch {
             cycles.delete(attempted.playlistId);
@@ -1044,8 +1094,10 @@
   });
   observer.observe(document.body, { childList: true, subtree: true });
   document.addEventListener("yt-navigate-start", () => {
-    running?.abort();
-    cycles.clear();
+    if (!switching) {
+      running?.abort();
+      cycles.clear();
+    }
   });
   document.addEventListener("yt-navigate-finish", scan);
   scan();

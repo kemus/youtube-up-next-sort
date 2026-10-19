@@ -1,18 +1,21 @@
 import { loadSettings, saveSettings, storageAvailable, type ButtonKey } from './settings.ts';
-import { aboveIds, duplicateIds, sameOrder, sortUpcoming, watchedIds, type Direction, type SortKey } from './sort.ts';
+import { aboveIds, arrange, duplicateIds, partition, sameOrder, watchedIds, type Direction, type SortKey } from './sort.ts';
 import { fetchStats } from './stats.ts';
-import { afterRemoval, readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
+import { afterRemoval, playItem, readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
 
 const HOST_TAG = 'yt-up-next-duration-sort';
 let running: AbortController | null = null;
+// Set while the script itself starts a queue video, whose navigation must not stop the sort.
+let switching = false;
 let settings = loadSettings();
 interface Cycle {
   key: SortKey;
   phase: Direction | 'partial';
   baseline: string[];
   expected: string[];
-  currentIndex: number;
   currentId: string;
+  /** The video playing when the cycle began; every step sorts from its place in the baseline. */
+  start: string;
 }
 const cycles = new Map<string, Cycle>();
 const controls = new Map<HTMLElement, () => void>();
@@ -38,8 +41,7 @@ const plural = (count: number, noun: string): string => `${count} ${noun}${count
 const ids = (snapshot: Snapshot): string[] => snapshot.items.map(item => item.id);
 function matchingCycle(snapshot: Snapshot): Cycle | undefined {
   const cycle = cycles.get(snapshot.playlistId);
-  return cycle && cycle.currentIndex === snapshot.currentIndex &&
-    cycle.currentId === snapshot.items[snapshot.currentIndex]?.id &&
+  return cycle && cycle.currentId === snapshot.items[snapshot.currentIndex]?.id &&
     sameOrder(cycle.expected, ids(snapshot)) ? cycle : undefined;
 }
 function nextStep(cycle: Cycle | undefined, key: SortKey): Direction | 'undo' {
@@ -200,6 +202,8 @@ function mount(panel: HTMLElement): void {
   fetchBox.parentElement!.title = 'Fetch views, likes and upload dates with this key.';
   const dedupeBox = toggle('dedupe', 'Dedupe on sort');
   dedupeBox.parentElement!.title = 'Remove repeated upcoming videos when sorting.';
+  const currentBox = toggle('includeCurrent', 'Include current video in sorting, and swap to first sorted video');
+  currentBox.parentElement!.title = 'Sort the playing video with the upcoming ones, then play whichever video sorts first.';
   const percentLabel = document.createElement('label');
   percentLabel.className = 'percent';
   percentLabel.title = 'How much of a video YouTube must show as seen for it to count as watched.';
@@ -299,10 +303,11 @@ function mount(panel: HTMLElement): void {
     const available = storageAvailable();
     fetchBox.checked = settings.fetch;
     dedupeBox.checked = settings.dedupe;
+    currentBox.checked = settings.includeCurrent;
     percentInput.value = String(settings.watchedPercent);
     showPercent();
     keyInput.value = settings.apiKey;
-    for (const input of [fetchBox, keyInput, dedupeBox, percentInput]) input.disabled = !available;
+    for (const input of [fetchBox, keyInput, dedupeBox, currentBox, percentInput]) input.disabled = !available;
     updateKeyButtons();
     renderButtonList();
     hint.hidden = available;
@@ -334,7 +339,7 @@ function mount(panel: HTMLElement): void {
   };
   const store = (apiKey: string): void => {
     settings = { ...settings, apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked,
-      watchedPercent: Number(percentInput.value) };
+      watchedPercent: Number(percentInput.value), includeCurrent: currentBox.checked };
     commit();
   };
   // One switch and a pair of move buttons per row button, in row order.
@@ -387,7 +392,7 @@ function mount(panel: HTMLElement): void {
       target?.focus();
     }
   }
-  for (const input of [fetchBox, dedupeBox, percentInput]) input.addEventListener('input', () => store(settings.apiKey));
+  for (const input of [fetchBox, dedupeBox, currentBox, percentInput]) input.addEventListener('input', () => store(settings.apiKey));
   percentInput.addEventListener('input', showPercent);
   keyInput.addEventListener('input', updateKeyButtons);
   saveKey.addEventListener('click', () => { keyInput.value = keyInput.value.trim(); store(keyInput.value); });
@@ -421,7 +426,8 @@ function mount(panel: HTMLElement): void {
       const scope = snapshot?.total !== null && snapshot?.total !== undefined && snapshot.total > snapshot.items.length
         ? `Loaded ${snapshot.items.length} of ${snapshot.total}; only loaded upcoming videos are sorted.`
         : `${upcoming.length} upcoming loaded videos.`;
-      button.title = problem || [action, 'Current video stays fixed.', scope,
+      button.title = problem || [action, settings.includeCurrent
+        ? 'The current video is sorted too, and the first sorted video plays.' : 'Current video stays fixed.', scope,
         saved ? 'Native playlist moves can also change the saved playlist order.' : '',
         settings.dedupe && step !== 'undo' ? 'Repeated upcoming videos are removed first.' : '',
       ].filter(Boolean).join(' ');
@@ -508,6 +514,7 @@ function mount(panel: HTMLElement): void {
       const existing = matchingCycle(snapshot);
       const step = nextStep(existing, key);
       let baseline = existing?.key === key ? existing.baseline : ids(snapshot);
+      const start = existing?.key === key ? existing.start : snapshot.items[snapshot.currentIndex]!.id;
       const repeats = step !== 'undo' && settings.dedupe ? duplicateIds(snapshot.items, snapshot.currentIndex) : [];
       let removedCount = 0;
       if (repeats.length > 0) {
@@ -521,37 +528,54 @@ function mount(panel: HTMLElement): void {
       }
       const removedNote = removedCount > 0 ? `Removed ${plural(removedCount, 'repeated video')}. ` : '';
       let items = snapshot.items;
-      const upcomingIds = new Set(ids(snapshot).slice(snapshot.currentIndex + 1));
-      if (upcomingIds.size < 2) {
+      const options = { includeCurrent: settings.includeCurrent };
+      const poolIds = new Set(partition(items, snapshot.currentIndex, options).pool.map(item => item.id));
+      if (step !== 'undo' && poolIds.size < 2) {
         report(`${removedNote}Load at least two upcoming videos to sort.`, true);
         return;
       }
       if (step !== 'undo' && fetched.has(key)) {
         if (!canFetch()) throw new Error('Save an API key and turn on Use API key in the sort settings.');
         report('Fetching video details…');
-        const stats = await fetchStats(items.filter(item => upcomingIds.has(item.id)).map(item => item.videoId), settings.apiKey, signal);
+        const stats = await fetchStats(items.filter(item => poolIds.has(item.id)).map(item => item.videoId), settings.apiKey, signal);
         items = items.map(item => ({ ...item, ...stats.get(item.videoId) }));
       }
-      if (step !== 'undo' && items.every(item => !upcomingIds.has(item.id) || unknown(item, key))) {
-        report(`${removedNote}No ${plurals[key]} are available for the upcoming videos.`, true);
+      if (step !== 'undo' && items.every(item => !poolIds.has(item.id) || unknown(item, key))) {
+        report(`${removedNote}No ${plurals[key]} are available for the videos to sort.`, true);
         return;
       }
+      // A later step sorts the baseline order, so ties and the pool's members
+      // match the first step's, wherever the playing video now sits.
       const byId = new Map(items.map(item => [item.id, item]));
-      const target = step === 'undo' ? baseline : sortUpcoming(
-        baseline.map(id => byId.get(id)!), snapshot.currentIndex, key, step,
-      ).map(item => item.id);
-      const cycle: Cycle = { key, phase: 'partial', baseline, expected: ids(snapshot),
-        currentIndex: snapshot.currentIndex, currentId: snapshot.items[snapshot.currentIndex]!.id };
+      const base = baseline.map(id => byId.get(id)!);
+      const currentId = snapshot.items[snapshot.currentIndex]!.id;
+      const baseIndex = baseline.indexOf(start);
+      const target = step === 'undo' ? baseline : arrange(base, baseIndex, key, step, options).map(item => item.id);
+      const cycle: Cycle = { key, phase: 'partial', baseline, expected: ids(snapshot), currentId, start };
       cycles.set(snapshot.playlistId, cycle);
       attempted = { playlistId: snapshot.playlistId, cycle };
       const moves = await reorderPanel(panel, snapshot, target, signal, report);
+      cycle.expected = target;
+      // Play the video that now sorts first, as a click on its row would.
+      const first = step !== 'undo' && options.includeCurrent ? target[partition(base, baseIndex, options).top.length] : undefined;
+      let playNote = '';
+      if (first !== undefined && first !== currentId) {
+        report('Playing the first sorted video…');
+        switching = true;
+        try {
+          await playItem(panel, readSnapshot(panel), first, signal);
+        } finally {
+          switching = false;
+        }
+        cycle.currentId = first;
+        playNote = ' Playing the first sorted video.';
+      }
       if (step === 'undo') {
         cycles.delete(snapshot.playlistId);
         report('Restored the order from before this sort cycle.');
       } else {
         cycle.phase = step;
-        cycle.expected = target;
-        report(`Sorted loaded upcoming videos ${descriptions[key][step]} (${moves} native moves). ${removedNote}`.trim());
+        report(`Sorted loaded ${options.includeCurrent ? 'videos' : 'upcoming videos'} ${descriptions[key][step]} (${moves} native moves).${playNote} ${removedNote}`.trim());
       }
     } catch (error) {
       if (attempted) {
@@ -559,12 +583,12 @@ function mount(panel: HTMLElement): void {
           const after = readSnapshot(panel);
           const { cycle } = attempted;
           const order = ids(after);
-          // Keep a usable undo after interruption only when the same queue,
-          // current occurrence, membership, and fixed prefix still exist.
-          if (after.playlistId === attempted.playlistId && after.currentIndex === cycle.currentIndex &&
-              order.length === cycle.baseline.length && order.every(id => cycle.baseline.includes(id)) &&
-              sameOrder(order.slice(0, after.currentIndex + 1), cycle.baseline.slice(0, after.currentIndex + 1))) {
+          // Keep a usable undo after interruption only while the same queue
+          // holds the same videos; the cycle follows whatever now plays.
+          if (after.playlistId === attempted.playlistId &&
+              order.length === cycle.baseline.length && order.every(id => cycle.baseline.includes(id))) {
             cycle.expected = order;
+            cycle.currentId = order[after.currentIndex]!;
           } else cycles.delete(attempted.playlistId);
         } catch { cycles.delete(attempted.playlistId); }
       }
@@ -605,6 +629,6 @@ const observer = new MutationObserver(() => {
   setTimeout(scan, 250);
 });
 observer.observe(document.body, { childList: true, subtree: true });
-document.addEventListener('yt-navigate-start', () => { running?.abort(); cycles.clear(); });
+document.addEventListener('yt-navigate-start', () => { if (!switching) { running?.abort(); cycles.clear(); } });
 document.addEventListener('yt-navigate-finish', scan);
 scan();

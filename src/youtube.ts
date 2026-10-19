@@ -117,11 +117,18 @@ export function readSnapshot(panel: HTMLElement): Snapshot {
     throw new Error('Queue occurrence identifiers are missing or duplicated.');
   }
   const selected = entries.flatMap((entry, index) => entry.selected === true ? [index] : []);
-  if (selected.length !== 1 || data.currentIndex !== selected[0]) {
+  // After a video starts in place, YouTube keeps currentIndex on the playing
+  // video but can leave the selected flags on its old position. The address
+  // bar names the playing video, so accept currentIndex when they agree.
+  const playing = new URLSearchParams(location.search).get('v');
+  const index = typeof data.currentIndex === 'number' ? data.currentIndex : -1;
+  const flagged = selected.length === 1 && selected[0] === index;
+  const named = !!playing && items[index]?.videoId === playing;
+  if (!flagged && !named) {
     throw new Error('Cannot locate the current video in the loaded queue. Try a short, fully loaded queue.');
   }
   const total = typeof data.totalVideos === 'number' ? data.totalVideos : null;
-  return { items, entries, currentIndex: selected[0]!, playlistId, total, container, rows, controller };
+  return { items, entries, currentIndex: index, playlistId, total, container, rows, controller };
 }
 
 const ids = (snapshot: Snapshot): string[] => snapshot.items.map(item => item.id);
@@ -132,9 +139,11 @@ const nextFrame = (): Promise<void> => new Promise(resolve => {
   setTimeout(resolve, 50);
 });
 
+const currentId = (snapshot: Snapshot): string | undefined => snapshot.items[snapshot.currentIndex]?.id;
+
+/** Same queue, same video playing; its index may change as rows move around it. */
 function checkSession(snapshot: Snapshot, initial: Snapshot): void {
-  if (snapshot.playlistId !== initial.playlistId || snapshot.currentIndex !== initial.currentIndex ||
-      snapshot.items[snapshot.currentIndex]?.id !== initial.items[initial.currentIndex]?.id) {
+  if (snapshot.playlistId !== initial.playlistId || currentId(snapshot) !== currentId(initial)) {
     throw new Error('Playback or the queue changed. Sorting stopped; completed moves remain applied.');
   }
 }
@@ -148,12 +157,13 @@ export async function reorderPanel(
 ): Promise<number> {
   const original = ids(initial);
   if (target.length !== original.length || new Set(target).size !== target.length ||
-      target.some(id => !original.includes(id)) ||
-      !sameOrder(target.slice(0, initial.currentIndex + 1), original.slice(0, initial.currentIndex + 1))) {
+      target.some(id => !original.includes(id))) {
     throw new Error('The requested order no longer matches this queue.');
   }
   let expected = ids(initial);
-  const plan = planMoves(expected, target, initial.currentIndex + 1);
+  let fixed = 0;
+  while (fixed < target.length && target[fixed] === expected[fixed]) fixed++;
+  const plan = planMoves(expected, target, fixed);
   let moves = 0;
   for (const { id, after: anchor } of plan) {
     signal.throwIfAborted();
@@ -163,12 +173,12 @@ export async function reorderPanel(
       throw new Error('The queue changed while sorting. Completed moves remain applied; try again.');
     }
     const row = before.rows[expected.indexOf(id)]!;
-    const anchorRow = before.rows[expected.indexOf(anchor)]!;
     const oldNext = row.nextSibling;
     const nextOrder = expected.filter(other => other !== id);
-    nextOrder.splice(nextOrder.indexOf(anchor) + 1, 0, id);
+    nextOrder.splice(anchor === null ? 0 : nextOrder.indexOf(anchor) + 1, 0, id);
     const reorder = before.controller.ytReorderableController!;
-    before.container.insertBefore(row, anchorRow.nextSibling);
+    // Rows start the container, so the top is before the first row.
+    before.container.insertBefore(row, anchor === null ? before.rows[0]! : before.rows[expected.indexOf(anchor)]!.nextSibling);
     try {
       // This is the callback installed by YouTube's own drag controller.
       // Its input is the moved row at its destination, exactly as after a drop.
@@ -214,6 +224,30 @@ export async function reorderPanel(
   checkSession(final, initial);
   if (!sameOrder(ids(final), target)) throw new Error('YouTube changed the order before verification finished. Try again.');
   return moves;
+}
+
+/**
+ * Play one loaded occurrence through its row's own link, as a click on the row
+ * does, and wait until YouTube marks it current. The order stays as it is.
+ */
+export async function playItem(panel: HTMLElement, initial: Snapshot, id: string, signal: AbortSignal): Promise<Snapshot> {
+  const index = ids(initial).indexOf(id);
+  const link = initial.rows[index]?.querySelector<HTMLElement>('a#wc-endpoint');
+  if (!link) throw new Error('YouTube offers no link to play the first sorted video. The new order stays.');
+  link.click();
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    signal.throwIfAborted();
+    try {
+      const snapshot = readSnapshot(panel);
+      if (snapshot.playlistId !== initial.playlistId) throw new Error('The queue changed before the first sorted video started.');
+      if (currentId(snapshot) === id) return snapshot;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+    }
+    if (Date.now() >= deadline) throw new Error('YouTube did not start the first sorted video. The new order stays.');
+    await delay(50);
+  }
 }
 
 /** The row's own "Remove" menu item, only if it removes exactly this occurrence from this list. */

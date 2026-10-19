@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aboveIds, duplicateIds, parseDuration, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
+import { aboveIds, arrange, duplicateIds, parseDuration, partition, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
 
 test('parses YouTube time badges, including long videos and directional markers', () => {
   for (const [text, seconds] of [['0:07', 7], ['12:34', 754], ['1:02:03', 3723], ['123:45:59', 445559], [' \u200e2:03\u200f ', 123]] as const) {
@@ -75,7 +75,7 @@ function applyMoves(order: readonly string[], moves: readonly Move[]): string[] 
   let result = [...order];
   for (const { id, after } of moves) {
     result = result.filter(other => other !== id);
-    result.splice(result.indexOf(after) + 1, 0, id);
+    result.splice(after === null ? 0 : result.indexOf(after) + 1, 0, id);
   }
   return result;
 }
@@ -85,6 +85,7 @@ test('moves only entries outside the longest run already in target order', () =>
   assert.deepEqual(planMoves(['x', 'b', 'c', 'd', 'a'], ['x', 'a', 'b', 'c', 'd'], 1), [{ id: 'a', after: 'x' }]);
   assert.deepEqual(planMoves(['x', 'a', 'b'], ['x', 'a', 'b'], 1), []);
   assert.equal(planMoves(['x', 'e', 'd', 'c', 'b', 'a'], ['x', 'a', 'b', 'c', 'd', 'e'], 1).length, 4);
+  assert.deepEqual(planMoves(['x', 'a', 'b'], ['b', 'x', 'a'], 0), [{ id: 'b', after: null }]); // Null drops at the top.
 });
 
 test('planned moves reach the target with the fewest moves', () => {
@@ -92,7 +93,7 @@ test('planned moves reach the target with the fewest moves', () => {
   const random = (limit: number): number => (seed = (seed * 1103515245 + 12345) % 2 ** 31) % limit;
   for (let round = 0; round < 300; round++) {
     const size = random(12) + 1;
-    const fixed = random(size) + 1;
+    const fixed = random(size + 1); // Zero lets the top entry move too.
     const current = Array.from({ length: size }, (_, index) => `v${index}`);
     const tail = current.slice(fixed);
     for (let index = tail.length - 1; index > 0; index--) {
@@ -118,4 +119,16 @@ test('above lists every occurrence before the current one', () => {
   const items = ['a', 'b', 'current', 'd'].map(id => ({ id, videoId: id, watched: 0 }));
   assert.deepEqual(aboveIds(items, 2), ['a', 'b']);
   assert.deepEqual(aboveIds(items, 0), []);
+});
+
+test('the current video joins the sorted pool only when asked', () => {
+  const items = [
+    { id: 'past', duration: 30 }, { id: 'current', duration: 50 }, { id: 'long', duration: 90 }, { id: 'short', duration: 10 },
+  ];
+  const order = (options = {}) => arrange(items, 1, 'duration', 'asc', options).map(item => item.id);
+  assert.deepEqual(order(), ['past', 'current', 'short', 'long']);
+  assert.deepEqual(order({ includeCurrent: true }), ['past', 'short', 'current', 'long']);
+  assert.deepEqual(arrange(items, 1, 'duration', 'desc', { includeCurrent: true }).map(item => item.id), ['past', 'long', 'current', 'short']);
+  assert.deepEqual(partition(items, 1, { includeCurrent: true }).pool.map(item => item.id), ['current', 'long', 'short']);
+  assert.throws(() => partition(items, 4), /currently playing/);
 });

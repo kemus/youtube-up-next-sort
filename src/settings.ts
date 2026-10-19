@@ -29,6 +29,8 @@ export interface Settings {
   /** How much of a video, in percent, YouTube must show as seen for it to count as watched; 0 means any progress. */
   watchedPercent: number;
   buttons: ButtonSetting[];
+  /** Sort the current video too, then play the first sorted video. */
+  includeCurrent: boolean;
 }
 
 const percent = (value: unknown): number =>
@@ -50,7 +52,7 @@ export function writeStored(name: string, value: unknown): void {
 /** Settings live in the manager's storage, not the page's; the page can still see the key in use. */
 export function loadSettings(): Settings {
   // Without storage nothing can be changed, so nothing removes videos unasked.
-  if (!storageAvailable()) return { apiKey: '', fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]) };
+  if (!storageAvailable()) return { apiKey: '', fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]), includeCurrent: false };
   const apiKey = GM_getValue!<unknown>('apiKey', '');
   return {
     apiKey: typeof apiKey === 'string' ? apiKey : '',
@@ -58,6 +60,7 @@ export function loadSettings(): Settings {
     dedupe: GM_getValue!<unknown>('dedupe', true) === true,
     watchedPercent: percent(GM_getValue!<unknown>('watchedPercent', 0)),
     buttons: normalizeButtons(GM_getValue!<unknown>('buttons', [])),
+    includeCurrent: GM_getValue!<unknown>('includeCurrent', false) === true,
   };
 }
 
@@ -68,4 +71,5 @@ export function saveSettings(settings: Settings): void {
   GM_setValue!('dedupe', settings.dedupe);
   GM_setValue!('watchedPercent', percent(settings.watchedPercent));
   GM_setValue!('buttons', normalizeButtons(settings.buttons).map(({ key, on }) => ({ key, on })));
+  GM_setValue!('includeCurrent', settings.includeCurrent);
 }
