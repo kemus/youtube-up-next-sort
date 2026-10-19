@@ -80,7 +80,7 @@ function mount(panel: HTMLElement): void {
     button:hover:enabled { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
-    .save svg { width: 14px; height: 14px; fill: currentColor; }
+    .save svg { flex: none; width: 14px !important; height: 14px !important; margin: 1px 0; fill: currentColor; }
     .settings label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
     .settings .key { display: flex; align-items: center; gap: 4px; max-width: 420px; margin-bottom: 4px; }
     .settings .key button { margin: 0; }
@@ -204,7 +204,10 @@ function mount(panel: HTMLElement): void {
     const icon = native.button.querySelector('svg');
     if (saveLook !== `${label}|${icon !== null}`) {
       saveLook = `${label}|${icon !== null}`;
-      save.replaceChildren(...(icon ? [icon.cloneNode(true)] : []), label);
+      const copy = icon?.cloneNode(true) as SVGElement | undefined;
+      // YouTube sizes its icons inline to fill a 24px box; size the copy to the text instead.
+      for (const name of ['style', 'width', 'height']) copy?.removeAttribute(name);
+      save.replaceChildren(...(copy ? [copy] : []), label);
     }
     save.setAttribute('aria-label', native.button.getAttribute('aria-label') || label);
     save.title = native.button.getAttribute('aria-label') || label;

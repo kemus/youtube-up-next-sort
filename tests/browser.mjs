@@ -55,7 +55,15 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
     const renderer = document.createElement('ytd-button-renderer');
     const save = document.createElement('button');
     save.setAttribute('aria-label', 'Save queue');
-    save.append(document.createElementNS('http://www.w3.org/2000/svg', 'svg'), 'Save');
+    // YouTube sizes its icons inline to fill a 24px box.
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('width', '24');
+    icon.setAttribute('height', '24');
+    icon.setAttribute('style', 'pointer-events: none; display: inherit; width: 100%; height: 100%;');
+    renderer.style.cssText = 'display: block; width: 90px; height: 36px;';
+    save.style.cssText = 'width: 100%; height: 100%;';
+    save.append(icon, 'Save');
     save.addEventListener('click', () => window.fixture.saves++);
     renderer.append(save);
     flexible.append(renderer);
@@ -194,6 +202,12 @@ for (const [browserName, executablePath] of [
         label: proxy.getAttribute('aria-label'), row: document.querySelector('#playlist-actions').style.display };
     });
     assert.deepEqual(await saveState(), { hidden: false, text: 'Save', icon: true, label: 'Save queue', row: 'none' });
+    // The copied icon fits the text, so Save is no taller than the sort buttons.
+    assert.deepEqual(await page.evaluate(() => {
+      const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
+      const height = selector => root.querySelector(selector).getBoundingClientRect().height;
+      return { icon: height('.save svg') <= 16, sameHeight: Math.abs(height('.save') - height('[data-sort=duration]')) < 0.5 };
+    }), { icon: true, sameHeight: true });
     await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('.save').click());
     assert.equal(await page.evaluate(() => window.fixture.saves), 1);
     await click(page); await settled(page);
