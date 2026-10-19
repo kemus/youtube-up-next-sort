@@ -1,5 +1,5 @@
 import { loadSettings, saveSettings, storageAvailable } from './settings.ts';
-import { duplicateIds, sameOrder, sortUpcoming, watchedIds, type Direction, type SortKey } from './sort.ts';
+import { aboveIds, duplicateIds, sameOrder, sortUpcoming, watchedIds, type Direction, type SortKey } from './sort.ts';
 import { fetchStats } from './stats.ts';
 import { afterRemoval, readSnapshot, removeItems, reorderPanel, type QueueItem, type Snapshot } from './youtube.ts';
 
@@ -105,9 +105,11 @@ function mount(panel: HTMLElement): void {
   // assigning HTML strings, which would throw before the control is attached.
   const style = document.createElement('style');
   style.textContent = `
-    :host { display: block; padding: 4px 6px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
-    button { flex: none; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 2px 5px; margin: 0; background: transparent; color: inherit; font: 400 10px/14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
-    .row, .confirm { display: flex; align-items: center; gap: 3px; margin-bottom: 4px; }
+    :host { display: block; padding: 4px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
+    button { flex: none; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 2px 3px; margin: 0; background: transparent; color: inherit; font: 400 10px/14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+    .row, .confirm { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
+    /* One line in YouTube's usual panel; wrap rather than clip in a narrower one. */
+    .row { flex-wrap: wrap; }
     button[aria-pressed="true"] { color: var(--yt-spec-text-primary, #eee); }
     button:disabled { opacity: .5; cursor: default; }
     button[hidden], .settings[hidden], .confirm[hidden] { display: none; }
@@ -147,6 +149,9 @@ function mount(panel: HTMLElement): void {
   const removeWatched = makeButton('');
   removalLabel(removeWatched, 'Watched');
   removeWatched.dataset.action = 'watched';
+  const removeAbove = makeButton('');
+  removalLabel(removeAbove, 'Above');
+  removeAbove.dataset.action = 'above';
   const gear = makeButton('⚙');
   gear.dataset.action = 'settings';
   gear.title = 'Sort settings';
@@ -210,7 +215,7 @@ function mount(panel: HTMLElement): void {
   save.hidden = true;
   const row = document.createElement('div');
   row.className = 'row';
-  row.append(save, ...buttons.values(), removeWatched, gear);
+  row.append(save, ...buttons.values(), removeWatched, removeAbove, gear);
   root.append(style, row, confirmBar, status, form);
   // Keep clicks from toggling YouTube's panel header, and typing in the key
   // field from triggering YouTube's player hotkeys.
@@ -332,6 +337,15 @@ function mount(panel: HTMLElement): void {
         : `Remove ${plural(count, 'video')} that YouTube shows as started from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
       removeWatched.setAttribute('aria-label', problem || action);
       removeWatched.title = problem || action;
+    }
+    if (!removeAbove.dataset.running) {
+      const count = snapshot ? aboveIds(snapshot.items, snapshot.currentIndex).length : 0;
+      removalLabel(removeAbove, 'Above');
+      removeAbove.disabled = running !== null || count === 0;
+      const action = count === 0 ? 'No loaded videos are above the current video.'
+        : `Remove the ${plural(count, 'video')} above the current video from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;
+      removeAbove.setAttribute('aria-label', problem || action);
+      removeAbove.title = problem || action;
     }
   }
 
@@ -465,6 +479,14 @@ function mount(panel: HTMLElement): void {
     if (watched.length === 0) { report('No loaded videos show watch progress.', true); return; }
     if (!(await remove(snapshot, watched, signal))) { report('Cancelled. Nothing was changed.'); return; }
     report(`Removed ${plural(watched.length, 'watched video')}.`);
+  }));
+  removeAbove.addEventListener('click', () => run(removeAbove, 'Stop removing', async signal => {
+    report('Reading the queue…');
+    const snapshot = readSnapshot(panel);
+    const above = aboveIds(snapshot.items, snapshot.currentIndex);
+    if (above.length === 0) { report('No loaded videos are above the current video.', true); return; }
+    if (!(await remove(snapshot, above, signal))) { report('Cancelled. Nothing was changed.'); return; }
+    report(`Removed ${plural(above.length, 'video')} above the current video.`);
   }));
   panel.prepend(host); // Outside #items: native drop computes indices from childNodes.
   controls.set(host, describe);

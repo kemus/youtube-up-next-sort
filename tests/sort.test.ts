@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { duplicateIds, parseDuration, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
+import { aboveIds, duplicateIds, parseDuration, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
 
 test('parses YouTube time badges, including long videos and directional markers', () => {
   for (const [text, seconds] of [['0:07', 7], ['12:34', 754], ['1:02:03', 3723], ['123:45:59', 445559], [' \u200e2:03\u200f ', 123]] as const) {
@@ -108,4 +108,10 @@ test('planned moves reach the target with the fewest moves', () => {
     });
     assert.equal(moves.length, ranks.length - Math.max(0, ...longest));
   }
+});
+
+test('above lists every occurrence before the current one', () => {
+  const items = ['a', 'b', 'current', 'd'].map(id => ({ id, videoId: id, watched: 0 }));
+  assert.deepEqual(aboveIds(items, 2), ['a', 'b']);
+  assert.deepEqual(aboveIds(items, 0), []);
 });

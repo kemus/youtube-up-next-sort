@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.8.8
+// @version      0.9.0
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -83,6 +83,9 @@
   }
   function watchedIds(items, currentIndex) {
     return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
+  }
+  function aboveIds(items, currentIndex) {
+    return items.slice(0, Math.max(currentIndex, 0)).map((item) => item.id);
   }
   function planMoves(current, target, fixed) {
     const rank = new Map(target.map((id, index) => [id, index]));
@@ -508,9 +511,11 @@
     const root = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = `
-    :host { display: block; padding: 4px 6px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
-    button { flex: none; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 2px 5px; margin: 0; background: transparent; color: inherit; font: 400 10px/14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
-    .row, .confirm { display: flex; align-items: center; gap: 3px; margin-bottom: 4px; }
+    :host { display: block; padding: 4px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
+    button { flex: none; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 2px 3px; margin: 0; background: transparent; color: inherit; font: 400 10px/14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+    .row, .confirm { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
+    /* One line in YouTube's usual panel; wrap rather than clip in a narrower one. */
+    .row { flex-wrap: wrap; }
     button[aria-pressed="true"] { color: var(--yt-spec-text-primary, #eee); }
     button:disabled { opacity: .5; cursor: default; }
     button[hidden], .settings[hidden], .confirm[hidden] { display: none; }
@@ -550,6 +555,9 @@
     const removeWatched = makeButton("");
     removalLabel(removeWatched, "Watched");
     removeWatched.dataset.action = "watched";
+    const removeAbove = makeButton("");
+    removalLabel(removeAbove, "Above");
+    removeAbove.dataset.action = "above";
     const gear = makeButton("\u2699");
     gear.dataset.action = "settings";
     gear.title = "Sort settings";
@@ -610,7 +618,7 @@
     save.hidden = true;
     const row = document.createElement("div");
     row.className = "row";
-    row.append(save, ...buttons.values(), removeWatched, gear);
+    row.append(save, ...buttons.values(), removeWatched, removeAbove, gear);
     root.append(style, row, confirmBar, status, form);
     for (const type of ["click", "keydown", "keyup", "keypress"]) {
       root.addEventListener(type, (event) => event.stopPropagation());
@@ -729,6 +737,14 @@
         const action = count2 === 0 ? "No loaded videos show watch progress." : `Remove ${plural(count2, "video")} that YouTube shows as started from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
         removeWatched.setAttribute("aria-label", problem || action);
         removeWatched.title = problem || action;
+      }
+      if (!removeAbove.dataset.running) {
+        const count2 = snapshot ? aboveIds(snapshot.items, snapshot.currentIndex).length : 0;
+        removalLabel(removeAbove, "Above");
+        removeAbove.disabled = running !== null || count2 === 0;
+        const action = count2 === 0 ? "No loaded videos are above the current video." : `Remove the ${plural(count2, "video")} above the current video from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
+        removeAbove.setAttribute("aria-label", problem || action);
+        removeAbove.title = problem || action;
       }
     }
     async function run(button, stopLabel, action) {
@@ -876,6 +892,20 @@
         return;
       }
       report(`Removed ${plural(watched.length, "watched video")}.`);
+    }));
+    removeAbove.addEventListener("click", () => run(removeAbove, "Stop removing", async (signal) => {
+      report("Reading the queue\u2026");
+      const snapshot = readSnapshot(panel);
+      const above = aboveIds(snapshot.items, snapshot.currentIndex);
+      if (above.length === 0) {
+        report("No loaded videos are above the current video.", true);
+        return;
+      }
+      if (!await remove(snapshot, above, signal)) {
+        report("Cancelled. Nothing was changed.");
+        return;
+      }
+      report(`Removed ${plural(above.length, "video")} above the current video.`);
     }));
     panel.prepend(host);
     controls.set(host, describe);

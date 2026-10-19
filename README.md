@@ -4,7 +4,8 @@ A TypeScript userscript that sorts **loaded upcoming videos** using the same
 native handler as YouTube's manual dragging. The current video and everything
 before it stay fixed. Equal values preserve their order from before the sort
 cycle. Live, upcoming, and unknown durations go last in both directions. It can
-also remove watched or repeated videos through each row's own remove action.
+also remove watched or repeated videos, or every video above the current one,
+through each row's own remove action.
 
 ## Install in Firefox
 
@@ -97,8 +98,12 @@ progress, before or after the current video; the current video stays. Any
 progress above zero counts. YouTube's figure can lag behind what you watched, so
 a video you finished may still show as unwatched or partly watched.
 
-The button shows a trash icon and **Watched** when a Nerd Font symbols font
-(Symbols Nerd Font) is installed, and reads **Remove watched** otherwise.
+**Above** removes every loaded video above the current one; the current video
+stays.
+
+These buttons show a trash icon and **Watched** or **Above** when a Nerd Font
+symbols font (Symbols Nerd Font) is installed, and read **Remove watched** or
+**Remove above** otherwise.
 
 With **Dedupe on sort** on, each sort first removes
 upcoming copies of a video that is the current video, appears before it, or

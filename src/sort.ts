@@ -71,6 +71,11 @@ export function watchedIds(items: readonly Occurrence[], currentIndex: number): 
   return items.flatMap((item, index) => index !== currentIndex && item.watched > 0 ? [item.id] : []);
 }
 
+/** Every occurrence above the current one. */
+export function aboveIds(items: readonly Occurrence[], currentIndex: number): string[] {
+  return items.slice(0, Math.max(currentIndex, 0)).map(item => item.id);
+}
+
 export interface Move {
   id: string;
   /** The entry the moved one is dropped directly after. */

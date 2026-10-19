@@ -320,17 +320,19 @@ for (const [browserName, executablePath] of [
     for (const key of ['views', 'likes', 'uploaded']) assert.equal(await shown(page, `[data-sort=${key}]`), true);
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
       .querySelectorAll('[data-sort]')].map(button => button.textContent.trim())), ['Duration', 'Title', 'Views', 'Likes', 'Date']);
-    // Every control fits on one line in a panel as narrow as YouTube's usual 400px.
+    // Every control fits on one line in a panel as narrow as YouTube's usual 400px,
+    // even with the arrow of an active sort.
     assert.deepEqual(await page.evaluate(() => {
       const host = document.querySelector('yt-up-next-duration-sort');
       host.parentElement.style.width = '400px';
+      host.shadowRoot.querySelector('[data-sort=duration]').textContent = 'Duration ↑';
       const box = host.getBoundingClientRect();
       const rects = [...host.shadowRoot.querySelectorAll('.row > button')]
         .filter(button => button.getClientRects().length).map(button => button.getBoundingClientRect());
       const result = { count: rects.length, tops: new Set(rects.map(rect => Math.round(rect.top))).size, heights: new Set(rects.map(rect => Math.round(rect.height))).size, inside: rects.every(rect => rect.right <= box.right) };
       host.parentElement.style.width = '';
       return result;
-    }), { count: 8, tops: 1, heights: 1, inside: true });
+    }), { count: 9, tops: 1, heights: 1, inside: true });
     assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
     // The field keeps the saved key masked and editable; Clear and Save share its line.
     const keyField = () => page.evaluate(() => {
@@ -443,9 +445,20 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(actual.removed, ['past', 'long']);
     assert.deepEqual(actual.order, ['current', 'short', 'tie', 'live', 'unknown', 'minute']);
     assert.equal(actual.current, 0);
+    assert.match(actual.status, /^Removed 2 watched videos/);
     await fixture(page, 'normal', {}, { watched: { long: 10 }, noGlyphFont: true });
     assert.deepEqual(await watchedLabel(), { text: 'Remove watched', font: null, hidden: null });
-    assert.match(actual.status, /^Removed 2 watched videos/);
+    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=above]').textContent), 'Remove above');
+
+    // Above removes every video before the current one, which stays.
+    await fixture(page);
+    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=above]').textContent), '\uEA81 Above');
+    await press(page, '[data-action=above]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual(actual.removed, ['past']);
+    assert.equal(actual.current, 0);
+    assert.match(actual.status, /^Removed 1 video above the current video/);
+    assert.equal(await shown(page, '[data-action=above]'), false); // Nothing is left above.
 
     // All removals go in one edit, without waiting for YouTube to drop the rows.
     await fixture(page, 'normal', {}, { watched: { past: 100, long: 10, short: 5 }, removeMode: 'late' });
@@ -494,7 +507,12 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), false);
     await press(page, '[data-action=watched]'); await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['long']);
-    console.log(`${browserName}: 30 browser fixture scenarios passed`);
+    await fixture(page, 'normal', { playlistId: 'PL-owned' });
+    await press(page, '[data-action=above]');
+    assert.equal(await shown(page, '[data-action=confirm]'), true);
+    await press(page, '[data-action=confirm]'); await idle(page);
+    assert.deepEqual((await result(page)).removed, ['past']);
+    console.log(`${browserName}: 32 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }
