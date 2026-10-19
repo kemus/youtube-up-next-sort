@@ -285,6 +285,29 @@ for (const [browserName, executablePath] of [
     assert.deepEqual(actual.order, ['past', 'short', 'tie', 'minute', 'long', 'current', 'live', 'unknown']);
     assert.match(actual.status, /did not start the first sorted video/);
 
+    // Unwatched videos above the current one sort with the upcoming ones.
+    await fixture(page, 'normal', {}, { settings: { includeAbove: true } });
+    assert.match((await result(page)).detail, /Unwatched videos above it are sorted too/);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['current', 'short', 'tie', 'minute', 'long', 'past', 'live', 'unknown']);
+    assert.deepEqual(actual.visible, actual.order);
+    assert.equal(actual.current, 0);
+    assert.match(actual.status, /^Sorted loaded videos shortest to longest/);
+    await click(page); await settled(page);
+    assert.deepEqual((await result(page)).order, ['current', 'past', 'long', 'minute', 'short', 'tie', 'live', 'unknown']);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, original);
+    assert.equal(actual.current, 1);
+    // A watched video above stays put; Watched at decides what counts.
+    await fixture(page, 'normal', {}, { settings: { includeAbove: true, watchedPercent: 50 }, watched: { past: 60 } });
+    await click(page); await settled(page);
+    assert.deepEqual((await result(page)).order, expected);
+    await fixture(page, 'normal', {}, { settings: { includeAbove: true, watchedPercent: 70 }, watched: { past: 60 } });
+    await click(page); await settled(page);
+    assert.deepEqual((await result(page)).order, ['current', 'short', 'tie', 'minute', 'long', 'past', 'live', 'unknown']);
+
     for (const mode of ['throw', 'noop']) {
       await fixture(page, mode); await click(page); await settled(page);
       actual = await result(page);
@@ -420,6 +443,7 @@ for (const [browserName, executablePath] of [
       .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent, input.disabled])),
     [['fetch', 'Use API key', true], ['dedupe', 'Dedupe on sort', false],
       ['includeCurrent', 'Include current video in sorting, and swap to first sorted video', false],
+      ['includeAbove', 'Include unwatched videos that are above the current video in sorting', false],
       ['button-duration', 'Duration', false], ['button-title', 'Title', false], ['button-views', 'Views', true],
       ['button-likes', 'Likes', true], ['button-uploaded', 'Date', true], ['button-watched', 'Watched', false], ['button-above', 'Above', false]]);
     // The key field comes first, then the toggle that uses it.

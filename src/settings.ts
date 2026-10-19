@@ -31,6 +31,8 @@ export interface Settings {
   buttons: ButtonSetting[];
   /** Sort the current video too, then play the first sorted video. */
   includeCurrent: boolean;
+  /** Sort the unwatched videos above the current one with the upcoming ones. */
+  includeAbove: boolean;
 }
 
 const percent = (value: unknown): number =>
@@ -52,7 +54,7 @@ export function writeStored(name: string, value: unknown): void {
 /** Settings live in the manager's storage, not the page's; the page can still see the key in use. */
 export function loadSettings(): Settings {
   // Without storage nothing can be changed, so nothing removes videos unasked.
-  if (!storageAvailable()) return { apiKey: '', fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]), includeCurrent: false };
+  if (!storageAvailable()) return { apiKey: '', fetch: false, dedupe: false, watchedPercent: 0, buttons: normalizeButtons([]), includeCurrent: false, includeAbove: false };
   const apiKey = GM_getValue!<unknown>('apiKey', '');
   return {
     apiKey: typeof apiKey === 'string' ? apiKey : '',
@@ -61,6 +63,7 @@ export function loadSettings(): Settings {
     watchedPercent: percent(GM_getValue!<unknown>('watchedPercent', 0)),
     buttons: normalizeButtons(GM_getValue!<unknown>('buttons', [])),
     includeCurrent: GM_getValue!<unknown>('includeCurrent', false) === true,
+    includeAbove: GM_getValue!<unknown>('includeAbove', false) === true,
   };
 }
 
@@ -72,4 +75,5 @@ export function saveSettings(settings: Settings): void {
   GM_setValue!('watchedPercent', percent(settings.watchedPercent));
   GM_setValue!('buttons', normalizeButtons(settings.buttons).map(({ key, on }) => ({ key, on })));
   GM_setValue!('includeCurrent', settings.includeCurrent);
+  GM_setValue!('includeAbove', settings.includeAbove);
 }

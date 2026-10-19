@@ -56,24 +56,35 @@ function sortItems<T extends Item>(items: readonly T[], key: SortKey, direction:
   return entries.map(entry => entry.item);
 }
 
-export interface ArrangeOptions {
+export interface ArrangeOptions<T> {
   /** Sort the current video with the upcoming ones. */
   includeCurrent?: boolean;
+  /** Sort the unwatched videos above the current one with the upcoming ones. */
+  includeAbove?: boolean;
+  /** Whether a video counts as watched; none do without it. */
+  watched?: (item: T) => boolean;
 }
 
 /**
  * Split the queue into the entries that keep their place at the top, in
  * order, and the pool a sort reorders below them.
  */
-export function partition<T extends Item>(items: readonly T[], currentIndex: number, options: ArrangeOptions = {}): { top: T[]; pool: T[] } {
+export function partition<T extends Item>(items: readonly T[], currentIndex: number, options: ArrangeOptions<T> = {}): { top: T[]; pool: T[] } {
   checkItems(items, currentIndex);
-  const start = options.includeCurrent ? currentIndex : currentIndex + 1;
-  return { top: items.slice(0, start), pool: items.slice(start) };
+  const watched = options.watched ?? (() => false);
+  const top: T[] = [];
+  const pool: T[] = [];
+  items.forEach((item, index) => {
+    const sorted = index > currentIndex ||
+      (index === currentIndex ? options.includeCurrent === true : options.includeAbove === true && !watched(item));
+    (sorted ? pool : top).push(item);
+  });
+  return { top, pool };
 }
 
 /** The whole queue after sorting its pool; see partition. */
 export function arrange<T extends Item>(
-  items: readonly T[], currentIndex: number, key: SortKey, direction: Direction, options: ArrangeOptions = {},
+  items: readonly T[], currentIndex: number, key: SortKey, direction: Direction, options: ArrangeOptions<T> = {},
 ): T[] {
   const { top, pool } = partition(items, currentIndex, options);
   return [...top, ...sortItems(pool, key, direction)];

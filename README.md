@@ -2,7 +2,7 @@
 
 A TypeScript userscript that sorts **loaded upcoming videos** using the same
 native handler as YouTube's manual dragging. Everything before the current
-video stays fixed, and so does the current video unless a setting sorts it too.
+video stays fixed, and so does the current video, unless settings sort them too.
 Equal values preserve their order from before the sort
 cycle. Live, upcoming, and unknown durations go last in both directions. It can
 also remove watched or repeated videos, or every video above the current one,
@@ -77,6 +77,9 @@ is saved.
 - **Include current video in sorting, and swap to first sorted video**: sort
   the current video with the upcoming ones, then play whichever comes first.
   Off by default. Undo restores the order but leaves the playing video alone.
+- **Include unwatched videos that are above the current video in sorting**:
+  sort them with the upcoming ones, below the current video; videos above it
+  that count as watched (see **Watched at**) keep their place. Off by default.
 - **Watched at**: how much of a video, from 0 to 100% in 5% steps, YouTube must
   show as seen for it to count as watched. At 0%, the default, any progress
   counts; a video with no progress never counts.

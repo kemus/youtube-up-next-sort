@@ -132,3 +132,19 @@ test('the current video joins the sorted pool only when asked', () => {
   assert.deepEqual(partition(items, 1, { includeCurrent: true }).pool.map(item => item.id), ['current', 'long', 'short']);
   assert.throws(() => partition(items, 4), /currently playing/);
 });
+
+test('unwatched videos above the current one join the sorted pool only when asked', () => {
+  const items = [
+    { id: 'seen', duration: 5, watched: 100 }, { id: 'missed', duration: 70, watched: 0 }, { id: 'half', duration: 1, watched: 40 },
+    { id: 'current', duration: 50, watched: 10 }, { id: 'long', duration: 90, watched: 0 }, { id: 'short', duration: 20, watched: 0 },
+  ];
+  const watched = (item: { watched: number }) => item.watched >= 50;
+  const order = (options = {}) => arrange(items, 3, 'duration', 'asc', { watched, ...options }).map(item => item.id);
+  assert.deepEqual(order(), ['seen', 'missed', 'half', 'current', 'short', 'long']);
+  // Below 50% counts as unwatched, so "half" is sorted too.
+  assert.deepEqual(order({ includeAbove: true }), ['seen', 'current', 'half', 'short', 'missed', 'long']);
+  assert.deepEqual(order({ includeAbove: true, includeCurrent: true }), ['seen', 'half', 'short', 'current', 'missed', 'long']);
+  assert.deepEqual(partition(items, 3, { includeAbove: true, watched }).top.map(item => item.id), ['seen', 'current']);
+  // Without a watched check, every video above counts as unwatched.
+  assert.deepEqual(partition(items, 3, { includeAbove: true }).pool.length, 5);
+});
