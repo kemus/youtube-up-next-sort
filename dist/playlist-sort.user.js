@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.8.2
+// @version      0.8.3
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -539,7 +539,6 @@
       form.append(label);
       return input;
     };
-    const fetchBox = toggle("fetch", "Fetch views, likes and upload dates");
     const keyLabel = document.createElement("label");
     keyLabel.htmlFor = "api-key";
     keyLabel.textContent = "YouTube Data API key";
@@ -558,6 +557,8 @@
     keyRow.className = "key";
     keyRow.append(keyInput, clearKey, saveKey);
     form.append(keyLabel, keyRow);
+    const fetchBox = toggle("fetch", "Use API key");
+    fetchBox.parentElement.title = "Fetch views, likes and upload dates with this key.";
     const dedupeBox = toggle("dedupe", "Dedupe");
     dedupeBox.parentElement.title = "Remove repeated upcoming videos when sorting.";
     const hint = document.createElement("p");
@@ -777,7 +778,7 @@
           return;
         }
         if (step !== "undo" && fetched.has(key)) {
-          if (!canFetch()) throw new Error("Turn on fetching and enter an API key in the sort settings.");
+          if (!canFetch()) throw new Error("Save an API key and turn on Use API key in the sort settings.");
           report("Fetching video details\u2026");
           const stats = await fetchStats(items.filter((item) => upcomingIds.has(item.id)).map((item) => item.videoId), settings.apiKey, signal);
           items = items.map((item) => ({ ...item, ...stats.get(item.videoId) }));

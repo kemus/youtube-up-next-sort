@@ -307,9 +307,11 @@ for (const [browserName, executablePath] of [
     const keyField = () => page.evaluate(() => {
       const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
       const input = root.querySelector('[data-setting=apiKey]');
-      const tops = ['[data-setting=apiKey]', '[data-action=clear]', '[data-action=save-key]']
-        .map(selector => Math.round(root.querySelector(selector).getBoundingClientRect().top));
-      return { value: input.value, type: input.type, sameLine: tops[0] === tops[1] && tops[1] === tops[2] };
+      const middles = ['[data-setting=apiKey]', '[data-action=clear]', '[data-action=save-key]'].map(selector => {
+        const rect = root.querySelector(selector).getBoundingClientRect();
+        return rect.top + rect.height / 2;
+      });
+      return { value: input.value, type: input.type, sameLine: Math.max(...middles) - Math.min(...middles) <= 1 };
     });
     assert.deepEqual(await keyField(), { value: 'key-1', type: 'password', sameLine: true });
     await typeKey('-x');
@@ -325,7 +327,13 @@ for (const [browserName, executablePath] of [
     assert.equal(await page.evaluate(() => window.gmStore.fetch), false);
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
       .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent])),
-    [['fetch', 'Fetch views, likes and upload dates'], ['dedupe', 'Dedupe']]);
+    [['fetch', 'Use API key'], ['dedupe', 'Dedupe']]);
+    // The key field comes first, then the toggle that uses it.
+    assert.equal(await page.evaluate(() => {
+      const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;
+      const top = selector => root.querySelector(selector).getBoundingClientRect().top;
+      return top('[data-setting=fetch]') > top('[data-setting=apiKey]');
+    }), true);
     assert.equal(await shown(page, '.settings p'), false); // No explanatory text while settings work.
 
     // Dedupe is on by default.

@@ -130,7 +130,6 @@ function mount(panel: HTMLElement): void {
     form.append(label);
     return input;
   };
-  const fetchBox = toggle('fetch', 'Fetch views, likes and upload dates');
   const keyLabel = document.createElement('label');
   keyLabel.htmlFor = 'api-key';
   keyLabel.textContent = 'YouTube Data API key';
@@ -149,6 +148,8 @@ function mount(panel: HTMLElement): void {
   keyRow.className = 'key';
   keyRow.append(keyInput, clearKey, saveKey);
   form.append(keyLabel, keyRow);
+  const fetchBox = toggle('fetch', 'Use API key');
+  fetchBox.parentElement!.title = 'Fetch views, likes and upload dates with this key.';
   const dedupeBox = toggle('dedupe', 'Dedupe');
   dedupeBox.parentElement!.title = 'Remove repeated upcoming videos when sorting.';
   const hint = document.createElement('p');
@@ -371,7 +372,7 @@ function mount(panel: HTMLElement): void {
         return;
       }
       if (step !== 'undo' && fetched.has(key)) {
-        if (!canFetch()) throw new Error('Turn on fetching and enter an API key in the sort settings.');
+        if (!canFetch()) throw new Error('Save an API key and turn on Use API key in the sort settings.');
         report('Fetching video details…');
         const stats = await fetchStats(items.filter(item => upcomingIds.has(item.id)).map(item => item.videoId), settings.apiKey, signal);
         items = items.map(item => ({ ...item, ...stats.get(item.videoId) }));
