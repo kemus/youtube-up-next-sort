@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.8.1
+// @version      0.8.2
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -499,7 +499,8 @@
     .settings input[role="switch"] { appearance: none; flex: none; width: 26px; height: 14px; margin: 0; border-radius: 7px; cursor: pointer;
       background: radial-gradient(circle at 7px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-10-percent-layer, #555); }
     .settings input[role="switch"]:checked { background: radial-gradient(circle at 19px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-call-to-action, #3ea6ff); }
-    .settings input[role="switch"]:disabled { opacity: .5; cursor: default; }
+    .settings input[role="switch"]:disabled { cursor: default; }
+    .settings label:has(input:disabled) { opacity: .5; }
     .settings p { margin: 4px 0; }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
@@ -624,6 +625,8 @@
       hint.textContent = available ? "" : "Settings need the userscript manager\u2019s storage permission. Reinstall the script to grant it.";
     }
     function updateKeyButtons() {
+      fetchBox.disabled = keyInput.disabled || !settings.apiKey;
+      fetchBox.checked = settings.fetch && settings.apiKey !== "";
       const typed = keyInput.value.trim();
       saveKey.disabled = keyInput.disabled || !typed || typed === settings.apiKey;
       clearKey.disabled = keyInput.disabled || !settings.apiKey && !keyInput.value;
@@ -634,7 +637,7 @@
       if (!form.hidden) fillSettings();
     });
     const store = (apiKey) => {
-      settings = { apiKey, fetch: fetchBox.checked, dedupe: dedupeBox.checked };
+      settings = { apiKey, fetch: apiKey !== "" && fetchBox.checked, dedupe: dedupeBox.checked };
       try {
         saveSettings(settings);
       } catch (error) {

@@ -277,18 +277,29 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-sort=views]'), false);
     assert.equal(await shown(page, '[data-setting=apiKey]'), false);
     await press(page, '[data-action=settings]');
+    // Fetching needs a saved key: its toggle stays off and disabled until then.
+    const fetchToggle = () => page.evaluate(() => {
+      const input = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=fetch]');
+      return { checked: input.checked, disabled: input.disabled };
+    });
+    assert.deepEqual(await fetchToggle(), { checked: false, disabled: true });
     await press(page, '[data-setting=fetch]');
+    assert.deepEqual(await fetchToggle(), { checked: false, disabled: true });
     const typeKey = async text => {
       await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-setting=apiKey]').focus());
       await page.keyboard.type(text);
     };
     await typeKey('key-1');
     // Typing alone saves nothing; Save does.
-    assert.deepEqual(await page.evaluate(() => window.gmStore), { apiKey: '', fetch: true, dedupe: false });
+    assert.deepEqual(await page.evaluate(() => window.gmStore), { dedupe: false });
     assert.equal(await page.evaluate(() => window.fixture.keys), 0); // Typing must not reach YouTube's hotkeys.
-    assert.equal(await shown(page, '[data-sort=views]'), false);
+    assert.deepEqual(await fetchToggle(), { checked: false, disabled: true }); // An unsaved key is not enough.
     await press(page, '[data-action=save-key]');
     assert.equal(await page.evaluate(() => window.gmStore.apiKey), 'key-1');
+    assert.deepEqual(await fetchToggle(), { checked: false, disabled: false });
+    assert.equal(await shown(page, '[data-sort=views]'), false);
+    await press(page, '[data-setting=fetch]');
+    assert.equal(await page.evaluate(() => window.gmStore.fetch), true);
     assert.equal(await shown(page, '[data-action=save-key]'), false); // Nothing left to save.
     for (const key of ['views', 'likes', 'uploaded']) assert.equal(await shown(page, `[data-sort=${key}]`), true);
     assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
@@ -310,6 +321,8 @@ for (const [browserName, executablePath] of [
     assert.equal((await keyField()).value, '');
     assert.equal(await shown(page, '[data-sort=views]'), false);
     assert.equal(await shown(page, '[data-action=clear]'), false);
+    assert.deepEqual(await fetchToggle(), { checked: false, disabled: true }); // Clearing the key turns fetching off.
+    assert.equal(await page.evaluate(() => window.gmStore.fetch), false);
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
       .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent])),
     [['fetch', 'Fetch views, likes and upload dates'], ['dedupe', 'Dedupe']]);
@@ -435,7 +448,7 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), false);
     await press(page, '[data-action=watched]'); await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['long']);
-    console.log(`${browserName}: 29 browser fixture scenarios passed`);
+    console.log(`${browserName}: 30 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }

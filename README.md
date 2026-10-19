@@ -67,8 +67,8 @@ Data API. If the manager did not grant storage, the panel says so and nothing
 is saved.
 
 - **Fetch views, likes and upload dates**, with a YouTube Data API key. Off by
-  default. **Views**, **Likes**, and **Uploaded** appear only when this is on
-  and a key is saved.
+  default, and disabled until a key is saved; **Clear** turns it off.
+  **Views**, **Likes**, and **Uploaded** appear only when this is on.
 - **Dedupe**: remove repeated videos when sorting. On by default, unless the
   manager grants no storage.
 

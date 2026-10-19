@@ -89,7 +89,8 @@ function mount(panel: HTMLElement): void {
     .settings input[role="switch"] { appearance: none; flex: none; width: 26px; height: 14px; margin: 0; border-radius: 7px; cursor: pointer;
       background: radial-gradient(circle at 7px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-10-percent-layer, #555); }
     .settings input[role="switch"]:checked { background: radial-gradient(circle at 19px 50%, #fff 4.5px, transparent 5px) var(--yt-spec-call-to-action, #3ea6ff); }
-    .settings input[role="switch"]:disabled { opacity: .5; cursor: default; }
+    .settings input[role="switch"]:disabled { cursor: default; }
+    .settings label:has(input:disabled) { opacity: .5; }
     .settings p { margin: 4px 0; }
     .confirm span { margin-right: 6px; color: var(--yt-spec-text-primary, #eee); }
     .notice { margin: 0 0 4px; }
@@ -222,6 +223,9 @@ function mount(panel: HTMLElement): void {
   }
   // The key field holds the saved key, masked; edits apply only through Save.
   function updateKeyButtons(): void {
+    // Fetching needs a saved key, so its toggle waits for one.
+    fetchBox.disabled = keyInput.disabled || !settings.apiKey;
+    fetchBox.checked = settings.fetch && settings.apiKey !== '';
     const typed = keyInput.value.trim();
     saveKey.disabled = keyInput.disabled || !typed || typed === settings.apiKey;
     clearKey.disabled = keyInput.disabled || (!settings.apiKey && !keyInput.value);
@@ -232,7 +236,7 @@ function mount(panel: HTMLElement): void {
     if (!form.hidden) fillSettings();
   });
   const store = (apiKey: string): void => {
-    settings = { apiKey, fetch: fetchBox.checked, dedupe: dedupeBox.checked };
+    settings = { apiKey, fetch: apiKey !== '' && fetchBox.checked, dedupe: dedupeBox.checked };
     try {
       saveSettings(settings);
     } catch (error) {
