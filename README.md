@@ -97,6 +97,9 @@ progress, before or after the current video; the current video stays. Any
 progress above zero counts. YouTube's figure can lag behind what you watched, so
 a video you finished may still show as unwatched or partly watched.
 
+The button shows a trash icon and **Watched** when a Nerd Font symbols font
+(Symbols Nerd Font) is installed, and reads **Remove watched** otherwise.
+
 With **Dedupe** on, each sort first removes
 upcoming copies of a video that is the current video, appears before it, or
 appears earlier among the upcoming ones. Entries at or before the current video

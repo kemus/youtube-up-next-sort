@@ -48,6 +48,39 @@ function refreshControls(): void {
   }
 }
 
+// Nerd Font's trash icon (nf-cod-trash), drawn only when a symbols font has it.
+const TRASH = '\uEA81';
+const GLYPH_FONTS = ['Symbols Nerd Font', 'Symbols Nerd Font Mono'];
+let glyphFont: string | null | undefined;
+
+/** The first installed symbols font, found by whether it changes the icon's width against two fallbacks. */
+function findGlyphFont(): string | null {
+  if (glyphFont !== undefined) return glyphFont;
+  const context = document.createElement('canvas').getContext('2d');
+  const width = (font: string): number => {
+    context!.font = `20px ${font}`;
+    return context!.measureText(TRASH).width;
+  };
+  glyphFont = context ? GLYPH_FONTS.find(name =>
+    width(`"${name}", monospace`) !== width('monospace') || width(`"${name}", serif`) !== width('serif')) ?? null : null;
+  return glyphFont;
+}
+
+/** Label a removal button with the trash icon and a word, or with "Remove word" without the font. */
+function removalLabel(button: HTMLButtonElement, word: string): void {
+  const font = findGlyphFont();
+  if (!font) {
+    button.textContent = `Remove ${word.toLowerCase()}`;
+    return;
+  }
+  const icon = document.createElement('span');
+  icon.className = 'glyph';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.style.fontFamily = `"${font}"`;
+  icon.textContent = TRASH;
+  button.replaceChildren(icon, ` ${word}`);
+}
+
 /** YouTube's panel action row, only when its sole visible control is Save. */
 function nativeSave(panel: HTMLElement): { row: HTMLElement; button: HTMLButtonElement } | null {
   const row = panel.querySelector<HTMLElement>('#playlist-actions');
@@ -81,6 +114,7 @@ function mount(panel: HTMLElement): void {
     button:hover:enabled { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .save { display: inline-flex; align-items: center; gap: 3px; }
+    .glyph { display: inline-block; height: 14px; line-height: 14px; vertical-align: top; overflow: hidden; }
     .save svg { flex: none; width: 12px !important; height: 12px !important; margin: 1px 0; fill: currentColor; }
     .settings label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
     .settings .key { display: flex; align-items: center; gap: 4px; max-width: 420px; margin-bottom: 4px; }
@@ -110,7 +144,8 @@ function mount(panel: HTMLElement): void {
     button.hidden = fetched.has(key);
     buttons.set(key, button);
   }
-  const removeWatched = makeButton('Remove watched');
+  const removeWatched = makeButton('');
+  removalLabel(removeWatched, 'Watched');
   removeWatched.dataset.action = 'watched';
   const gear = makeButton('⚙');
   gear.dataset.action = 'settings';
@@ -291,7 +326,7 @@ function mount(panel: HTMLElement): void {
     }
     if (!removeWatched.dataset.running) {
       const count = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex).length : 0;
-      removeWatched.textContent = 'Remove watched';
+      removalLabel(removeWatched, 'Watched');
       removeWatched.disabled = running !== null || count === 0;
       const action = count === 0 ? 'No loaded videos show watch progress.'
         : `Remove ${plural(count, 'video')} that YouTube shows as started from this ${saved ? 'saved playlist' : 'queue'}. The current video stays.`;

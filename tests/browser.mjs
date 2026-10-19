@@ -21,6 +21,8 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       window.GM_getValue = (name, fallback) => name in store ? store[name] : fallback;
       window.GM_setValue = (name, value) => { store[name] = value; };
     }
+    // Without a symbols font every font measures the trash icon alike.
+    if (options.noGlyphFont) CanvasRenderingContext2D.prototype.measureText = () => ({ width: 10 });
     // The control asks for a closed shadow root; record that, then open it so tests can reach inside.
     const attachShadow = Element.prototype.attachShadow;
     Element.prototype.attachShadow = function (init) {
@@ -325,10 +327,10 @@ for (const [browserName, executablePath] of [
       const box = host.getBoundingClientRect();
       const rects = [...host.shadowRoot.querySelectorAll('.row > button')]
         .filter(button => button.getClientRects().length).map(button => button.getBoundingClientRect());
-      const result = { count: rects.length, tops: new Set(rects.map(rect => Math.round(rect.top))).size, inside: rects.every(rect => rect.right <= box.right) };
+      const result = { count: rects.length, tops: new Set(rects.map(rect => Math.round(rect.top))).size, heights: new Set(rects.map(rect => Math.round(rect.height))).size, inside: rects.every(rect => rect.right <= box.right) };
       host.parentElement.style.width = '';
       return result;
-    }), { count: 8, tops: 1, inside: true });
+    }), { count: 8, tops: 1, heights: 1, inside: true });
     assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
     // The field keeps the saved key masked and editable; Clear and Save share its line.
     const keyField = () => page.evaluate(() => {
@@ -429,11 +431,20 @@ for (const [browserName, executablePath] of [
     // Any progress counts as watched, before or after the current video, which stays.
     assert.equal(await shown(page, '[data-action=watched]'), false);
     await fixture(page, 'normal', {}, { watched: { past: 100, current: 50, long: 10 } });
+    // The trash icon shows with a symbols font (this machine has Symbols Nerd Font), words without one.
+    const watchedLabel = () => page.evaluate(() => {
+      const button = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=watched]');
+      const glyph = button.querySelector('.glyph');
+      return { text: button.textContent, font: glyph?.style.fontFamily.replaceAll('"', '') ?? null, hidden: glyph?.getAttribute('aria-hidden') ?? null };
+    });
+    assert.deepEqual(await watchedLabel(), { text: '\uEA81 Watched', font: 'Symbols Nerd Font', hidden: 'true' });
     await press(page, '[data-action=watched]'); await idle(page);
     actual = await result(page);
     assert.deepEqual(actual.removed, ['past', 'long']);
     assert.deepEqual(actual.order, ['current', 'short', 'tie', 'live', 'unknown', 'minute']);
     assert.equal(actual.current, 0);
+    await fixture(page, 'normal', {}, { watched: { long: 10 }, noGlyphFont: true });
+    assert.deepEqual(await watchedLabel(), { text: 'Remove watched', font: null, hidden: null });
     assert.match(actual.status, /^Removed 2 watched videos/);
 
     // All removals go in one edit, without waiting for YouTube to drop the rows.

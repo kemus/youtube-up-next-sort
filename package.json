@@ -1,6 +1,6 @@
 {
   "name": "youtube-up-next-sort",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "private": true,
   "type": "module",
   "description": "Cycle native YouTube queue sorting by duration, title, and optionally fetched views, likes, or upload date; remove watched or repeated videos.",

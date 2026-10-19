@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.8.6
+// @version      0.8.7
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -466,6 +466,32 @@
       else controls.delete(host);
     }
   }
+  var TRASH = "\uEA81";
+  var GLYPH_FONTS = ["Symbols Nerd Font", "Symbols Nerd Font Mono"];
+  var glyphFont;
+  function findGlyphFont() {
+    if (glyphFont !== void 0) return glyphFont;
+    const context = document.createElement("canvas").getContext("2d");
+    const width = (font) => {
+      context.font = `20px ${font}`;
+      return context.measureText(TRASH).width;
+    };
+    glyphFont = context ? GLYPH_FONTS.find((name) => width(`"${name}", monospace`) !== width("monospace") || width(`"${name}", serif`) !== width("serif")) ?? null : null;
+    return glyphFont;
+  }
+  function removalLabel(button, word) {
+    const font = findGlyphFont();
+    if (!font) {
+      button.textContent = `Remove ${word.toLowerCase()}`;
+      return;
+    }
+    const icon = document.createElement("span");
+    icon.className = "glyph";
+    icon.setAttribute("aria-hidden", "true");
+    icon.style.fontFamily = `"${font}"`;
+    icon.textContent = TRASH;
+    button.replaceChildren(icon, ` ${word}`);
+  }
   function nativeSave(panel) {
     const row = panel.querySelector("#playlist-actions");
     if (!row) return null;
@@ -491,6 +517,7 @@
     button:hover:enabled { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .save { display: inline-flex; align-items: center; gap: 3px; }
+    .glyph { display: inline-block; height: 14px; line-height: 14px; vertical-align: top; overflow: hidden; }
     .save svg { flex: none; width: 12px !important; height: 12px !important; margin: 1px 0; fill: currentColor; }
     .settings label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
     .settings .key { display: flex; align-items: center; gap: 4px; max-width: 420px; margin-bottom: 4px; }
@@ -520,7 +547,8 @@
       button.hidden = fetched.has(key);
       buttons.set(key, button);
     }
-    const removeWatched = makeButton("Remove watched");
+    const removeWatched = makeButton("");
+    removalLabel(removeWatched, "Watched");
     removeWatched.dataset.action = "watched";
     const gear = makeButton("\u2699");
     gear.dataset.action = "settings";
@@ -696,7 +724,7 @@
       }
       if (!removeWatched.dataset.running) {
         const count2 = snapshot ? watchedIds(snapshot.items, snapshot.currentIndex).length : 0;
-        removeWatched.textContent = "Remove watched";
+        removalLabel(removeWatched, "Watched");
         removeWatched.disabled = running !== null || count2 === 0;
         const action = count2 === 0 ? "No loaded videos show watch progress." : `Remove ${plural(count2, "video")} that YouTube shows as started from this ${saved ? "saved playlist" : "queue"}. The current video stays.`;
         removeWatched.setAttribute("aria-label", problem || action);
