@@ -70,7 +70,7 @@ is saved.
   with a YouTube Data API key. Off by default, and disabled until a key is
   saved; **Clear** turns it off.
   **Views**, **Likes**, and **Date** appear only when this is on.
-- **Dedupe**: remove repeated videos when sorting. On by default, unless the
+- **Dedupe on sort**: remove repeated videos when sorting. On by default, unless the
   manager grants no storage.
 
 ### Views, Likes, and Date
@@ -100,7 +100,7 @@ a video you finished may still show as unwatched or partly watched.
 The button shows a trash icon and **Watched** when a Nerd Font symbols font
 (Symbols Nerd Font) is installed, and reads **Remove watched** otherwise.
 
-With **Dedupe** on, each sort first removes
+With **Dedupe on sort** on, each sort first removes
 upcoming copies of a video that is the current video, appears before it, or
 appears earlier among the upcoming ones. Entries at or before the current video
 are never removed as repeats.
@@ -110,7 +110,7 @@ playlist itself, so the script first asks "Remove N videos from this saved
 playlist?" and does nothing unless you confirm. All the videos go in one
 playlist edit, run through a copy of YouTube's own "Remove" menu item, and the
 script does not wait for YouTube to drop the rows or check that it did; a video
-YouTube keeps stays in the list. A sort after Dedupe waits up to 1.5 seconds
+YouTube keeps stays in the list. A sort that removed repeats waits up to 1.5 seconds
 for the repeats to go, then sorts what is left. Removals cannot be undone, and
 a sort's Undo does not bring removed videos back.
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.8.7
+// @version      0.8.8
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js
@@ -588,7 +588,7 @@
     form.append(keyLabel, keyRow);
     const fetchBox = toggle("fetch", "Use API key");
     fetchBox.parentElement.title = "Fetch views, likes and upload dates with this key.";
-    const dedupeBox = toggle("dedupe", "Dedupe");
+    const dedupeBox = toggle("dedupe", "Dedupe on sort");
     dedupeBox.parentElement.title = "Remove repeated upcoming videos when sorting.";
     const hint = document.createElement("p");
     form.append(hint);

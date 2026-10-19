@@ -356,7 +356,7 @@ for (const [browserName, executablePath] of [
     assert.equal(await page.evaluate(() => window.gmStore.fetch), false);
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
       .querySelectorAll('[role=switch]')].map(input => [input.dataset.setting, input.parentElement.textContent])),
-    [['fetch', 'Use API key'], ['dedupe', 'Dedupe']]);
+    [['fetch', 'Use API key'], ['dedupe', 'Dedupe on sort']]);
     // The key field comes first, then the toggle that uses it.
     assert.equal(await page.evaluate(() => {
       const root = document.querySelector('yt-up-next-duration-sort').shadowRoot;

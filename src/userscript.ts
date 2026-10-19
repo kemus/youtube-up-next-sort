@@ -186,7 +186,7 @@ function mount(panel: HTMLElement): void {
   form.append(keyLabel, keyRow);
   const fetchBox = toggle('fetch', 'Use API key');
   fetchBox.parentElement!.title = 'Fetch views, likes and upload dates with this key.';
-  const dedupeBox = toggle('dedupe', 'Dedupe');
+  const dedupeBox = toggle('dedupe', 'Dedupe on sort');
   dedupeBox.parentElement!.title = 'Remove repeated upcoming videos when sorting.';
   const hint = document.createElement('p');
   form.append(hint);
