@@ -72,15 +72,16 @@ function mount(panel: HTMLElement): void {
   // assigning HTML strings, which would throw before the control is attached.
   const style = document.createElement('style');
   style.textContent = `
-    :host { display: block; padding: 4px 8px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
-    button { border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 3px 7px; margin: 0 4px 4px 0; background: transparent; color: inherit; font: 400 11px/16px system-ui, sans-serif; cursor: pointer; }
+    :host { display: block; padding: 4px 6px; color: var(--yt-spec-text-secondary, #aaa); font: 11px/1.4 system-ui, sans-serif; }
+    button { flex: none; border: 1px solid var(--yt-spec-10-percent-layer, #555); border-radius: 4px; padding: 2px 5px; margin: 0; background: transparent; color: inherit; font: 400 10px/14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+    .row, .confirm { display: flex; align-items: center; gap: 3px; margin-bottom: 4px; }
     button[aria-pressed="true"] { color: var(--yt-spec-text-primary, #eee); }
     button:disabled { opacity: .5; cursor: default; }
     button[hidden], .settings[hidden], .confirm[hidden] { display: none; }
     button:hover:enabled { background: var(--yt-spec-badge-chip-background, #333); color: var(--yt-spec-text-primary, #eee); }
     button:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-    .save { display: inline-flex; align-items: center; gap: 4px; vertical-align: top; }
-    .save svg { flex: none; width: 14px !important; height: 14px !important; margin: 1px 0; fill: currentColor; }
+    .save { display: inline-flex; align-items: center; gap: 3px; }
+    .save svg { flex: none; width: 12px !important; height: 12px !important; margin: 1px 0; fill: currentColor; }
     .settings label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
     .settings .key { display: flex; align-items: center; gap: 4px; max-width: 420px; margin-bottom: 4px; }
     .settings .key button { margin: 0; }
@@ -172,7 +173,10 @@ function mount(panel: HTMLElement): void {
   const save = makeButton('');
   save.className = 'save';
   save.hidden = true;
-  root.append(style, save, ...buttons.values(), removeWatched, gear, confirmBar, status, form);
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.append(save, ...buttons.values(), removeWatched, gear);
+  root.append(style, row, confirmBar, status, form);
   // Keep clicks from toggling YouTube's panel header, and typing in the key
   // field from triggering YouTube's player hotkeys.
   for (const type of ['click', 'keydown', 'keyup', 'keypress']) {

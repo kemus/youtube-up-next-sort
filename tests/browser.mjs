@@ -318,6 +318,17 @@ for (const [browserName, executablePath] of [
     for (const key of ['views', 'likes', 'uploaded']) assert.equal(await shown(page, `[data-sort=${key}]`), true);
     assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot
       .querySelectorAll('[data-sort]')].map(button => button.textContent.trim())), ['Duration', 'Title', 'Views', 'Likes', 'Date']);
+    // Every control fits on one line in a panel as narrow as YouTube's usual 400px.
+    assert.deepEqual(await page.evaluate(() => {
+      const host = document.querySelector('yt-up-next-duration-sort');
+      host.parentElement.style.width = '400px';
+      const box = host.getBoundingClientRect();
+      const rects = [...host.shadowRoot.querySelectorAll('.row > button')]
+        .filter(button => button.getClientRects().length).map(button => button.getBoundingClientRect());
+      const result = { count: rects.length, tops: new Set(rects.map(rect => Math.round(rect.top))).size, inside: rects.every(rect => rect.right <= box.right) };
+      host.parentElement.style.width = '';
+      return result;
+    }), { count: 8, tops: 1, inside: true });
     assert.deepEqual(await page.evaluate(() => window.shadowModes), ['closed']);
     // The field keeps the saved key masked and editable; Clear and Save share its line.
     const keyField = () => page.evaluate(() => {
