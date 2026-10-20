@@ -189,6 +189,13 @@ For live acceptance, make a short queue with different lengths, start the first
 video, sort, and confirm both **Next** and automatic advancement follow the new
 order. Repeat in a disposable editable playlist if you want playlist coverage.
 
+`npm run probe` checks the built script against live YouTube without signing
+in: headless Chromium queues eight videos, injects `dist/playlist-sort.user.js`
+with in-memory storage, and saves screenshots of the row and settings panel to a
+new temporary directory. Pass a steps module and an output directory to script
+other checks, for example `npm run probe -- steps.mjs out`; set `SETTINGS` to a
+JSON object to preset storage and `QUEUE` to change the queue length.
+
 ## Source and integration
 
 - `src/sort.ts`: duration parsing, stable tail sorting by each key, and the
