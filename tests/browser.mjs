@@ -585,13 +585,23 @@ for (const [browserName, executablePath] of [
     // Any progress counts as watched, before or after the current video, which stays.
     assert.equal(await shown(page, '[data-action=watched]'), false);
     await fixture(page, 'normal', {}, { watched: { past: 100, current: 50, long: 10 } });
-    // The trash icon shows with a symbols font (this machine has Symbols Nerd Font), words without one.
+    // The trash icon shows with a symbols font, words without one. CI runners lack
+    // Symbols Nerd Font, so the icon case runs only where the font is installed.
     const watchedLabel = () => page.evaluate(() => {
       const button = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=watched]');
       const glyph = button.querySelector('.glyph');
       return { text: button.textContent, font: glyph?.style.fontFamily.replaceAll('"', '') ?? null, hidden: glyph?.getAttribute('aria-hidden') ?? null };
     });
-    assert.deepEqual(await watchedLabel(), { text: '\uEA81 Watched', font: 'Symbols Nerd Font', hidden: 'true' });
+    const hasGlyphFont = await page.evaluate(() => {
+      const context = document.createElement('canvas').getContext('2d');
+      const width = font => { context.font = `20px ${font}`; return context.measureText('\uEA81').width; };
+      return width('"Symbols Nerd Font", monospace') !== width('monospace') || width('"Symbols Nerd Font", serif') !== width('serif');
+    });
+    if (hasGlyphFont) assert.deepEqual(await watchedLabel(), { text: '\uEA81 Watched', font: 'Symbols Nerd Font', hidden: 'true' });
+    else {
+      console.log(`${browserName}: Symbols Nerd Font not installed; skipped the trash icon check`);
+      assert.deepEqual(await watchedLabel(), { text: 'Remove watched', font: null, hidden: null });
+    }
     await press(page, '[data-action=watched]'); await idle(page);
     actual = await result(page);
     assert.deepEqual(actual.removed, ['past', 'long']);
@@ -610,7 +620,7 @@ for (const [browserName, executablePath] of [
 
     // Above removes every video before the current one, which stays.
     await fixture(page);
-    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=above]').textContent), '\uEA81 Above');
+    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=above]').textContent), hasGlyphFont ? '\uEA81 Above' : 'Remove above');
     await press(page, '[data-action=above]'); await idle(page);
     actual = await result(page);
     assert.deepEqual(actual.removed, ['past']);
