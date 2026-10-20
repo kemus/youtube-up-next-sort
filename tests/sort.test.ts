@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aboveIds, arrange, duplicateIds, parseDuration, partition, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
+import { aboveIds, arrange, duplicateIds, isWatched, parseDuration, partition, planMoves, sameOrder, sortUpcoming, watchedIds, type Move } from '../src/sort.ts';
 
 test('parses YouTube time badges, including long videos and directional markers', () => {
   for (const [text, seconds] of [['0:07', 7], ['12:34', 754], ['1:02:03', 3723], ['123:45:59', 445559], [' \u200e2:03\u200f ', 123]] as const) {
@@ -161,4 +161,91 @@ test('watched videos move above the current and sorted ones only when asked', ()
   assert.deepEqual(order({ watchedFirst: true, includeAbove: true }), ['seen', 'long', 'tiny', 'current', 'short', 'missed']);
   assert.deepEqual(order({ watchedFirst: true, includeCurrent: true }), ['seen', 'long', 'tiny', 'missed', 'short', 'current']);
   assert.deepEqual(order(), ['missed', 'seen', 'current', 'tiny', 'short', 'long']);
+});
+
+test('each directional and isolate mark is stripped before parsing', () => {
+  for (const mark of ['‎', '‏', '‪', '‬', '‮', '⁦', '⁩']) {
+    assert.equal(parseDuration(`${mark}4:05${mark}`), 245, JSON.stringify(mark));
+  }
+  assert.equal(parseDuration('59:59'), 3599);
+  assert.equal(parseDuration('00:07'), 7);
+  for (const text of ['1:2', '1:02:3', '1:00:60', '1:02:03:04', ':30', '1:30 ']) {
+    assert.equal(parseDuration(text), text === '1:30 ' ? 90 : null, JSON.stringify(text));
+  }
+});
+
+test('titles sort trimmed, by base letters with numeric parts; empty and missing titles go last', () => {
+  const items = [
+    { id: 'current', duration: 1, title: 'zzz' },
+    { id: 'part-10', duration: 1, title: 'Part 10' }, { id: 'part-2', duration: 1, title: 'part 2' },
+    { id: 'blank', duration: 1, title: '   ' }, { id: 'apple', duration: 1, title: 'Apple' },
+    { id: 'none', duration: 1, title: null }, { id: 'apple-lower', duration: 1, title: 'ápple' },
+    { id: 'banana', duration: 1, title: '  Banana ' }, { id: 'unset', duration: 1 },
+  ];
+  assert.deepEqual(sortUpcoming(items, 0, 'title', 'asc').map(item => item.id),
+    ['current', 'apple', 'apple-lower', 'banana', 'part-2', 'part-10', 'blank', 'none', 'unset']);
+  // Equal titles keep their order, and missing ones stay last, in descending order too.
+  assert.deepEqual(sortUpcoming(items, 0, 'title', 'desc').map(item => item.id),
+    ['current', 'part-10', 'part-2', 'banana', 'apple', 'apple-lower', 'blank', 'none', 'unset']);
+});
+
+test('likes and upload dates each sort by their own field', () => {
+  const items = [
+    { id: 'current', duration: 1 },
+    { id: 'a', duration: 3, views: 1, likes: 30, uploadedAt: 200 },
+    { id: 'b', duration: 1, views: 3, likes: 10, uploadedAt: 300 },
+    { id: 'c', duration: 2, views: 2, likes: 20, uploadedAt: 100 },
+    { id: 'd', duration: 0.5, views: 0, likes: null, uploadedAt: null },
+  ];
+  const order = (key: 'likes' | 'uploaded', direction: 'asc' | 'desc') => sortUpcoming(items, 0, key, direction).map(item => item.id);
+  assert.deepEqual(order('likes', 'asc'), ['current', 'b', 'c', 'a', 'd']);
+  assert.deepEqual(order('likes', 'desc'), ['current', 'a', 'c', 'b', 'd']);
+  assert.deepEqual(order('uploaded', 'asc'), ['current', 'c', 'a', 'b', 'd']);
+  assert.deepEqual(order('uploaded', 'desc'), ['current', 'b', 'a', 'c', 'd']);
+  // Zero is a value, not a missing one.
+  assert.deepEqual(sortUpcoming(items, 0, 'views', 'asc').map(item => item.id), ['current', 'd', 'a', 'c', 'b']);
+});
+
+test('descending order keeps equal durations in their given order', () => {
+  const items = [{ id: 'current', duration: 1 }, { id: 'first', duration: 5 }, { id: 'second', duration: 5 }, { id: 'long', duration: 9 }];
+  assert.deepEqual(sortUpcoming(items, 0, 'duration', 'desc').map(item => item.id), ['current', 'long', 'first', 'second']);
+});
+
+test('a video counts as watched only with progress at or above the threshold', () => {
+  const at = (watched: number, percent?: number) => isWatched({ id: 'x', videoId: 'x', watched }, percent);
+  assert.equal(at(0), false);
+  assert.equal(at(0, 0), false);
+  assert.equal(at(1), true);
+  assert.equal(at(49, 50), false);
+  assert.equal(at(50, 50), true);
+  assert.equal(at(100, 100), true);
+});
+
+test('order comparison needs the same entries in the same places', () => {
+  assert.equal(sameOrder(['a', 'b'], ['a', 'b']), true);
+  assert.equal(sameOrder(['a', 'b'], ['b', 'a']), false);
+  assert.equal(sameOrder([], []), true);
+});
+
+test('nothing is above an out-of-range current index', () => {
+  assert.deepEqual(aboveIds([{ id: 'a', videoId: 'a', watched: 0 }, { id: 'b', videoId: 'b', watched: 0 }], -1), []);
+});
+
+test('arranging checks the current index and identifiers too', () => {
+  assert.throws(() => arrange([{ id: 'a', duration: 1 }], 1, 'duration', 'asc'), /currently playing/);
+  assert.throws(() => arrange([{ id: 'a', duration: 1 }, { id: 'a', duration: 2 }], 0, 'duration', 'asc'), /unique queue item identifiers/);
+  assert.throws(() => sortUpcoming([{ id: 'a', duration: 1 }, { id: 'a', duration: 2 }], 0), /unique queue item identifiers/);
+});
+
+test('the current video stays in place under watched-first even when watched', () => {
+  const items = [{ id: 'a', duration: 1, watched: 0 }, { id: 'current', duration: 1, watched: 100 }, { id: 'b', duration: 1, watched: 100 }];
+  const { top, pool } = partition(items, 1, { watchedFirst: true, watched: item => item.watched > 0 });
+  assert.deepEqual(top.map(item => item.id), ['b', 'a', 'current']);
+  assert.deepEqual(pool, []);
+});
+
+test('planned moves leave the fixed prefix alone and name their drop point', () => {
+  assert.deepEqual(planMoves(['x', 'y', 'c', 'a', 'b'], ['x', 'y', 'a', 'b', 'c'], 2), [{ id: 'c', after: 'b' }]);
+  assert.deepEqual(planMoves(['b', 'c', 'a'], ['a', 'b', 'c'], 0), [{ id: 'a', after: null }]);
+  assert.deepEqual(planMoves(['x', 'b', 'c', 'a'], ['x', 'a', 'b', 'c'], 1), [{ id: 'a', after: 'x' }]);
 });

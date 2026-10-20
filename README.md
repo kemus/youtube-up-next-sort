@@ -176,7 +176,8 @@ npm run check
 npm run test:browser
 ```
 
-`check` runs TypeScript checking, sorting tests, and a readable esbuild bundle.
+`check` runs TypeScript checking, unit tests for sorting, settings and the Data
+API cache, and a readable esbuild bundle.
 The compiled `.user.js` is committed for installation without build tooling.
 
 Browser tests use installed Firefox and Chromium with disposable headless profiles.
@@ -184,7 +185,9 @@ Override `FIREFOX_BIN` and `CHROMIUM_BIN` if needed. GitHub Actions runs them
 with the runner's preinstalled Firefox and Google Chrome. They exercise native-handler
 fixtures, including independent playback state, failure/no-op detection,
 cancellation, duplicates, and concurrent changes, plus settings storage, a
-mocked Data API, and removals. They do not use your regular profile, contact
+mocked Data API, and removals. `tests/youtube.browser.mjs` drives the YouTube
+adapter in `src/youtube.ts` directly: reading the queue, native moves and their
+verification, playing a row, and removal. They do not use your regular profile, contact
 the Data API, or authenticate to YouTube.
 
 For live acceptance, make a short queue with different lengths, start the first

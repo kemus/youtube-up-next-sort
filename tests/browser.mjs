@@ -19,7 +19,7 @@ const blank = `http://127.0.0.1:${server.address().port}/`;
 // freshStorage (empty storage, for defaults), noStorage, watched ({ id: percent }),
 // api ('quota' for a quota error), removeMode ('noop' for an ignored removal, 'late' for one applied
 // after 200 ms), removeVia ('command' when YouTube's menu item is unavailable), play ('ignore' for row
-// links that start nothing).
+// links that start nothing), titles ({ id: title }), current (the playing id; 'current' by default).
 async function fixture(page, mode = 'normal', extra = {}, options = {}) {
   await page.goto(blank);
   // Each fixture needs a fresh page, without an earlier copy of the userscript.
@@ -100,7 +100,8 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
       ['short', '0:15'], ['tie', '0:15'], ['live', 'LIVE'], ['unknown', ''], ['minute', '1:00'],
     ].map(([id, length]) => ({ playlistPanelVideoRenderer: {
       playlistSetVideoId: id, videoId: id === 'tie' ? 'short' : id,
-      selected: id === 'current', lengthText: { simpleText: length },
+      selected: id === (options.current ?? 'current'), lengthText: { simpleText: length },
+      ...options.titles?.[id] ? { title: { simpleText: options.titles[id] } } : {},
       isLive: id === 'live',
       thumbnailOverlays: options.watched?.[id]
         ? [{ thumbnailOverlayResumePlaybackRenderer: { percentDurationWatched: options.watched[id] } }] : [],
@@ -109,8 +110,9 @@ async function fixture(page, mode = 'normal', extra = {}, options = {}) {
         { menuServiceItemRenderer: { serviceEndpoint: { playlistEditEndpoint: { playlistId, actions: [{ setVideoId: id, action: 'ACTION_REMOVE_VIDEO' }] } } } },
       ] } },
     } }));
-    const data = { contents: entries, playlistId, currentIndex: 1, totalVideos: entries.length, ...extra };
-    const state = window.fixture = { moves: 0, saves: 0, keys: 0, removed: [], edits: [], commands: 0, requests: [], apiKeys: [], playerNext: 'long', plays: [], data };
+    const currentIndex = entries.findIndex(entry => entry.playlistPanelVideoRenderer.selected);
+    const data = { contents: entries, playlistId, currentIndex, totalVideos: entries.length, ...extra };
+    const state = window.fixture = { render: () => render(), moves: 0, saves: 0, keys: 0, removed: [], edits: [], commands: 0, requests: [], apiKeys: [], playerNext: 'long', plays: [], data };
     document.addEventListener('keydown', () => state.keys++);
     // Stands in for YouTube running a playlist edit, with every action it carries.
     const runEdit = endpoint => {
@@ -680,7 +682,193 @@ for (const [browserName, executablePath] of [
     assert.equal(await shown(page, '[data-action=confirm]'), true);
     await press(page, '[data-action=confirm]'); await idle(page);
     assert.deepEqual((await result(page)).removed, ['past']);
-    console.log(`${browserName}: 34 browser fixture scenarios passed`);
+
+    // Each sort button names its next step, and its arrow shows the step just done.
+    const button = selector => page.evaluate(selector => {
+      const element = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector(selector);
+      return { text: element.textContent, pressed: element.getAttribute('aria-pressed'), label: element.getAttribute('aria-label'), title: element.title, disabled: element.disabled };
+    }, selector);
+    const pick = (object, ...keys) => Object.fromEntries(keys.map(key => [key, object[key]]));
+    await fixture(page);
+    assert.deepEqual(await button('[data-sort=duration]'), { text: 'Duration', pressed: 'false', label: 'Sort upcoming videos shortest to longest.',
+      title: 'Sort upcoming videos shortest to longest. Current video stays fixed. 6 upcoming loaded videos.', disabled: false });
+    assert.equal((await button('[data-sort=title]')).label, 'Sort upcoming videos A to Z.');
+    await click(page); await settled(page);
+    assert.deepEqual(pick(await button('[data-sort=duration]'), 'text', 'pressed', 'label'),
+      { text: 'Duration ↑', pressed: 'true', label: 'Sort upcoming videos longest to shortest.' });
+    assert.deepEqual(pick(await button('[data-sort=title]'), 'text', 'pressed'), { text: 'Title', pressed: 'false' });
+    await click(page); await settled(page);
+    assert.deepEqual(pick(await button('[data-sort=duration]'), 'text', 'label'),
+      { text: 'Duration ↓', label: 'Undo duration sorting; restore the order before this cycle.' });
+    await click(page); await settled(page);
+    assert.deepEqual(pick(await button('[data-sort=duration]'), 'text', 'pressed'), { text: 'Duration', pressed: 'false' });
+
+    // With dedupe on, sorting steps say repeats go first; undo does not.
+    await fixture(page, 'normal', {}, { settings: { dedupe: true } });
+    assert.match((await button('[data-sort=duration]')).title, / Repeated upcoming videos are removed first\.$/);
+    await click(page); await idle(page); await click(page); await idle(page);
+    assert.doesNotMatch((await button('[data-sort=duration]')).title, /Repeated/);
+    // Undo never removes repeats, even when dedupe is turned on mid-cycle.
+    await fixture(page);
+    await click(page); await idle(page); await click(page); await idle(page);
+    await page.evaluate(() => { window.gmStore.dedupe = true; });
+    await click(page); await idle(page);
+    actual = await result(page);
+    assert.deepEqual([actual.order, actual.removed], [original, []]);
+
+    // Titles sort A to Z ignoring case, untitled videos last.
+    await fixture(page, 'normal', {}, { titles: { past: 'Zed', current: 'Middle', long: 'Banana', short: 'apple', tie: 'Cherry', minute: 'Date' } });
+    await press(page, '[data-sort=title]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, ['past', 'current', 'short', 'long', 'tie', 'minute', 'live', 'unknown']);
+    assert.match(actual.status, /^Sorted loaded upcoming videos A to Z \(/);
+    await press(page, '[data-sort=title]'); await idle(page);
+    assert.deepEqual((await result(page)).order, ['past', 'current', 'minute', 'tie', 'long', 'short', 'live', 'unknown']);
+    await fixture(page);
+    await press(page, '[data-sort=title]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual([actual.status, actual.moves], ['No titles are available for the videos to sort.', 0]);
+
+    // One upcoming video is too few to sort.
+    await fixture(page, 'normal', {}, { current: 'unknown' });
+    assert.match((await result(page)).detail, / 1 upcoming loaded videos\.$/);
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual([actual.status, actual.moves], ['Load at least two upcoming videos to sort.', 0]);
+
+    // Settings are read again on each click, so a key turned off elsewhere stops a fetched sort.
+    await fixture(page, 'normal', {}, { settings: { apiKey: 'key-1', fetch: true } });
+    await page.evaluate(() => { window.gmStore.fetch = false; });
+    await press(page, '[data-sort=views]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual([actual.status, actual.requests, actual.moves], ['Save an API key and turn on Use API key in the sort settings.', [], 0]);
+
+    // While one action runs, its button stops it and the other queue actions wait.
+    await fixture(page, 'noop');
+    await click(page);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelectorAll('.row > button')]
+      .filter(element => element.getClientRects().length).map(element => `${element.dataset.sort ?? element.dataset.action ?? 'save'}:${element.disabled}`)),
+    ['save:true', 'duration:false', 'title:true', 'watched:true', 'above:true', 'settings:false']);
+    assert.deepEqual(pick(await button('[data-sort=duration]'), 'text', 'label', 'title'), { text: 'Stop', label: 'Stop sorting', title: 'Stop sorting' });
+    await click(page); await settled(page);
+    assert.equal((await button('[data-sort=title]')).disabled, false);
+
+    // Leaving the page stops a running sort and forgets the cycle.
+    await fixture(page, 'noop');
+    await click(page);
+    await page.evaluate(() => document.dispatchEvent(new Event('yt-navigate-start')));
+    await settled(page);
+    assert.match((await result(page)).status, /^Stopped/);
+    await fixture(page);
+    await click(page); await settled(page);
+    await page.evaluate(() => document.dispatchEvent(new Event('yt-navigate-start')));
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, expected); // Ascending again, not the cycle's descending step.
+    assert.match(actual.status, /shortest to longest \(0 native moves\)/);
+
+    // A stopped sort offers undo, which restores the order from before the cycle.
+    await fixture(page, 'stop'); await click(page); await settled(page);
+    assert.deepEqual(pick(await button('[data-sort=duration]'), 'text', 'label'),
+      { text: 'Duration ↶', label: 'Undo duration sorting; restore the order before this cycle.' });
+    await click(page); await settled(page);
+    actual = await result(page);
+    assert.deepEqual(actual.order, original);
+    assert.match(actual.status, /^Restored/);
+    // An interrupted sort keeps undo while the queue holds the same videos, wherever playback went.
+    await fixture(page, 'advance'); await click(page); await settled(page);
+    assert.equal((await button('[data-sort=duration]')).text, 'Duration ↶');
+    await fixture(page, 'concurrent'); await click(page); await settled(page);
+    assert.equal((await button('[data-sort=duration]')).text, 'Duration');
+
+    // Reordering the queue some other way ends the cycle.
+    await fixture(page); await click(page); await settled(page);
+    await page.evaluate(() => {
+      const { data } = window.fixture;
+      [data.contents[4], data.contents[5]] = [data.contents[5], data.contents[4]];
+      window.fixture.render();
+      document.querySelector('ytd-playlist-panel-renderer').dispatchEvent(new Event('yt-rendererstamper-finished'));
+    });
+    assert.equal((await button('[data-sort=duration]')).text, 'Duration');
+    await click(page); await settled(page);
+    assert.deepEqual((await result(page)).order, expected);
+
+    // When the queue cannot be sorted, every button says why.
+    await fixture(page, 'normal', { shuffleOn: true });
+    assert.equal((await result(page)).detail, 'Turn off YouTube shuffle before sorting.');
+    for (const selector of ['[data-action=watched]', '[data-action=above]']) {
+      assert.deepEqual(pick(await button(selector), 'title', 'label'),
+        { title: 'Turn off YouTube shuffle before sorting.', label: 'Turn off YouTube shuffle before sorting.' });
+    }
+
+    // A queue panel added later gets its own controls.
+    await fixture(page);
+    await page.evaluate(() => document.body.append(Object.assign(document.createElement('ytd-playlist-panel-renderer'), { id: 'late' })));
+    await page.waitForFunction(() => document.querySelector('#late > yt-up-next-duration-sort'), { timeout: 3000 });
+    assert.equal(await page.evaluate(() => document.querySelectorAll('yt-up-next-duration-sort').length), 2);
+
+    // The Save copy follows YouTube's button, and steps aside once its row holds more.
+    await fixture(page);
+    const restamp = () => page.evaluate(() => document.querySelector('ytd-playlist-panel-renderer').dispatchEvent(new Event('yt-rendererstamper-finished')));
+    await page.evaluate(() => {
+      const native = document.querySelector('#playlist-actions button');
+      native.setAttribute('aria-label', 'Save to playlist');
+      native.lastChild.textContent = 'Saved';
+    });
+    await restamp();
+    assert.deepEqual(await saveState(), { hidden: false, text: 'Saved', icon: true, label: 'Save to playlist', row: 'none' });
+    await page.evaluate(() => document.querySelector('#playlist-actions').append(Object.assign(document.createElement('button'), { textContent: 'Loop' })));
+    await restamp();
+    assert.deepEqual(pick(await saveState(), 'hidden', 'row'), { hidden: true, row: '' });
+    await page.evaluate(() => document.querySelector('#playlist-actions > button').remove());
+    await restamp();
+    assert.deepEqual(pick(await saveState(), 'hidden', 'row'), { hidden: false, row: 'none' });
+
+    // Removal buttons count what they would remove, and from where.
+    await fixture(page, 'normal', {}, { watched: { long: 10, short: 20 } });
+    assert.equal((await button('[data-action=watched]')).label, 'Remove 2 videos that YouTube shows as watched (watch progress) from this queue. The current video stays.');
+    assert.equal((await button('[data-action=above]')).label, 'Remove the 1 video above the current video from this queue. The current video stays.');
+    await fixture(page, 'normal', { playlistId: 'PL-owned' }, { watched: { long: 60 }, settings: { watchedPercent: 50 } });
+    assert.equal((await button('[data-action=watched]')).title, 'Remove 1 video that YouTube shows as watched (at least 50% watched) from this saved playlist. The current video stays.');
+    assert.match((await button('[data-action=above]')).label, /from this saved playlist\./);
+    await fixture(page, 'normal', {}, { current: 'past', settings: { watchedPercent: 50 } });
+    assert.deepEqual(pick(await button('[data-action=watched]'), 'label', 'disabled'), { label: 'No loaded videos show at least 50% watched.', disabled: true });
+    assert.deepEqual(pick(await button('[data-action=above]'), 'label', 'disabled'), { label: 'No loaded videos are above the current video.', disabled: true });
+
+    // A setting that cannot be saved says so; the gear reports whether settings are open.
+    await fixture(page);
+    await press(page, '[data-action=settings]');
+    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=settings]').getAttribute('aria-expanded')), 'true');
+    await page.evaluate(() => { delete window.GM_setValue; });
+    await press(page, '[data-setting=dedupe]');
+    assert.deepEqual(await page.evaluate(() => {
+      const status = document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[role=status]');
+      return [status.textContent, status.className];
+    }), ['The userscript manager’s storage is unavailable. Reinstall the script to grant it.', 'notice']);
+    await press(page, '[data-action=settings]');
+    assert.equal(await page.evaluate(() => document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('[data-action=settings]').getAttribute('aria-expanded')), 'false');
+
+    // Clicks inside the control stay out of YouTube's panel header.
+    await fixture(page);
+    await page.evaluate(() => { window.outside = 0; document.addEventListener('click', () => window.outside++); });
+    await press(page, '[data-action=settings]'); await press(page, '[data-sort=title]'); await idle(page);
+    assert.equal(await page.evaluate(() => window.outside), 0);
+
+    // Dedupe on a saved playlist asks first; Cancel or Stop changes nothing.
+    const confirmShown = () => page.waitForFunction(() => !document.querySelector('yt-up-next-duration-sort').shadowRoot.querySelector('.confirm').hidden, { timeout: 3000 });
+    await fixture(page, 'normal', { playlistId: 'PL-owned' }, { settings: { dedupe: true } });
+    await click(page); await confirmShown();
+    await press(page, '[data-action=cancel]'); await idle(page);
+    actual = await result(page);
+    assert.deepEqual([actual.removed, actual.order, actual.status], [[], original, 'Cancelled. Nothing was changed.']);
+    await fixture(page, 'normal', { playlistId: 'PL-owned' }, { settings: { dedupe: true } });
+    await click(page); await confirmShown();
+    await click(page); await idle(page);
+    actual = await result(page);
+    assert.deepEqual([actual.removed, actual.order], [[], original]);
+    assert.match(actual.status, /^Stopped/);
+    assert.equal(await shown(page, '[data-action=confirm]'), false);
+    console.log(`${browserName}: 54 browser fixture scenarios passed`);
   } finally {
     await browser.close();
   }

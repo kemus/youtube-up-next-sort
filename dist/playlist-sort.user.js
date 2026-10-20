@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Up Next — Shortest First
 // @namespace    urn:kemus:youtube-up-next-sort
-// @version      0.14.3
+// @version      0.14.4
 // @description  Sort upcoming videos by duration or title, and optionally by views, likes, or upload date. Remove watched or repeated videos.
 // @homepageURL  https://github.com/kemus/youtube-up-next-sort
 // @downloadURL  https://raw.githubusercontent.com/kemus/youtube-up-next-sort/main/dist/playlist-sort.user.js

@@ -1,6 +1,6 @@
 {
   "name": "youtube-up-next-sort",
-  "version": "0.14.3",
+  "version": "0.14.4",
   "private": true,
   "type": "module",
   "description": "Cycle native YouTube queue sorting by duration, title, and optionally fetched views, likes, or upload date; remove watched or repeated videos.",
@@ -11,7 +11,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
-    "test:browser": "node tests/browser.mjs",
+    "test:browser": "node tests/browser.mjs && node tests/youtube.browser.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "serve": "node scripts/serve.mjs",
     "probe": "node scripts/live-probe.mjs"
