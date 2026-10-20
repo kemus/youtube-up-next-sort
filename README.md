@@ -148,8 +148,9 @@ reports that it cannot read the queue, check your manager's injection setting.
 ## Prototype boundaries
 
 - Works only where YouTube exposes native reordering with drag handles.
-- Only already-loaded items after the selected video are sorted. It does not
-  scroll or fetch missing items. The button tooltip reports a partial count when available.
+- Only already-loaded items are sorted: those after the selected video, plus
+  the selected video and the unwatched videos above it when those settings are
+  on. It does not scroll or fetch missing items. The button tooltip reports a partial count when available.
 - Shuffle must be off. Radio/mix lists and unsupported layouts stop with a message.
 - **Moving items in an editable saved playlist can also save the new order**, just
   as manual dragging does. This is not a temporary-playlist replacement.
@@ -179,7 +180,8 @@ npm run test:browser
 The compiled `.user.js` is committed for installation without build tooling.
 
 Browser tests use installed Firefox and Chromium with disposable headless profiles.
-Override `FIREFOX_BIN` and `CHROMIUM_BIN` if needed. They exercise native-handler
+Override `FIREFOX_BIN` and `CHROMIUM_BIN` if needed. GitHub Actions runs them
+with the runner's preinstalled Firefox and Google Chrome. They exercise native-handler
 fixtures, including independent playback state, failure/no-op detection,
 cancellation, duplicates, and concurrent changes, plus settings storage, a
 mocked Data API, and removals. They do not use your regular profile, contact
