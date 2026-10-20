@@ -18,6 +18,14 @@ jobs:
       - run: npm run check
       - name: Check committed userscript matches source
         run: git diff --exit-code -- dist/playlist-sort.user.js
+      - name: Run browser fixture tests
+        run: |
+          FIREFOX_BIN="$(command -v firefox)"
+          CHROMIUM_BIN="$(command -v google-chrome)"
+          export FIREFOX_BIN CHROMIUM_BIN
+          "$FIREFOX_BIN" --version
+          "$CHROMIUM_BIN" --version
+          npm run test:browser
       - uses: actions/upload-artifact@v4
         with:
           name: playlist-sort-userscript
