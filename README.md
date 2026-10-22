@@ -201,6 +201,13 @@ new temporary directory. Pass a steps module and an output directory to script
 other checks, for example `npm run probe -- steps.mjs out`; set `SETTINGS` to a
 JSON object to preset storage and `QUEUE` to change the queue length.
 
+`npm run mutate` checks that the tests notice breakage: it applies each change
+in `scripts/mutations.mjs` to a scratch copy, runs the suite that should fail,
+and lists the changes no test caught. The browser part runs in Firefox only and
+takes well over ten minutes, so CI doesn't run it. Pass an id regex to run a
+subset, for example `npm run mutate -- '^sort-'`, and an output directory to
+keep the logs; set `WORKERS` to change the number of parallel copies (4).
+
 ## Source and integration
 
 - `src/sort.ts`: duration parsing, stable tail sorting by each key, and the
