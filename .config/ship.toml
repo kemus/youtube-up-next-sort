@@ -1,0 +1,6 @@
+# AGENTS.md lets agents push verified merges on main to this public repo
+# without asking.
+[approved.push]
+remotes = "^github\\.com/kemus/youtube-up-next-sort$"
+visibility = ["public"]
+default_branch = true
